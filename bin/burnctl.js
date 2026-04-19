@@ -18,6 +18,8 @@ const SUBCOMMANDS = new Set([
   'realstory', 'insights', 'waste', 'show-other', 'window',
   'export', 'fixes', 'init', 'mcp', 'keys', 'claude-ai',
   'sync-daemon',
+  // v4.0.4 additions
+  'version-check', 'peak-hours', 'resume-audit', 'variance',
 ]);
 
 const args = process.argv.slice(2);
