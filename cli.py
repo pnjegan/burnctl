@@ -32,6 +32,16 @@ Commands:
                 Audit JSONL sessions for waste patterns (file_reread,
                 retry_error, dead_end, compaction_thrash, browser_wall,
                 oververbose_tool). Prints prescriptions + CLAUDE.md fixes.
+  version-check Detect known-bad Claude Code versions (2.1.69-2.1.89)
+                + cache-fix interceptor presence. Pure subprocess; no DB.
+  peak-hours    Show peak hour status (Mon-Fri 13:00-19:00 UTC) and
+                drain-rate context. Prepended to `burnrate` output too.
+  resume-audit [days]
+                Scan JSONL for cache-bust signals (5m TTL domination,
+                low cache hit rate). Default: last 30 days.
+  variance [project]
+                Session cost variance profiler. Shows CV per project +
+                root-cause diagnosis. Default: last 60 days.
   fix start "desc" --project X
                 Snapshot current burn for project X, start a measurement
                 (requires 10+ sessions before result is meaningful)
@@ -1854,6 +1864,12 @@ def cmd_fix_result():
 def cmd_burnrate():
     """Print live burn rate (tokens/min, $/min, $/hr projected)."""
     from burn_rate import get_burn_rate
+    from peak_hour import get_peak_status
+    peak = get_peak_status()
+    print(peak["message"])
+    if peak["in_peak"]:
+        print(f"   {peak['detail']}")
+    print()
     br = get_burn_rate()
     if "error" in br:
         print(f"ERROR: {br['error']}")
@@ -1862,6 +1878,31 @@ def cmd_burnrate():
     print(f"  {br['tokens_per_min']} tokens/min")
     print(f"  ${br['cost_per_min']}/min  (${br['cost_per_hour']}/hr projected)")
     print(f"  {br['sessions_active']} active sessions")
+
+
+def cmd_peak_hours():
+    """`burnctl peak-hours` — peak hour window status."""
+    from peak_hour import print_peak_status
+    print_peak_status()
+
+
+def cmd_resume_audit():
+    """`burnctl resume-audit [days]` — scan JSONL for cache-bust signals."""
+    from resume_audit import run_resume_audit
+    days = 30
+    if len(sys.argv) >= 3:
+        try:
+            days = int(sys.argv[2])
+        except ValueError:
+            pass
+    run_resume_audit(days)
+
+
+def cmd_variance():
+    """`burnctl variance [project]` — session cost variance profiler."""
+    from variance_profiler import run_variance
+    project = sys.argv[2] if len(sys.argv) >= 3 else None
+    run_variance(project)
 
 
 def cmd_loops():
@@ -1898,6 +1939,12 @@ def cmd_statusline():
     """One-line statusline output for Claude Code statusline hooks."""
     from burn_rate import statusline
     print(statusline())
+
+
+def cmd_version_check():
+    """`burnctl version-check` — flag known-bad Claude Code versions."""
+    from version_check import run_version_check
+    run_version_check()
 
 
 def main():
@@ -1960,6 +2007,10 @@ def main():
         "block": cmd_block,
         "statusline": cmd_statusline,
         "audit": cmd_audit,
+        "version-check": cmd_version_check,
+        "peak-hours": cmd_peak_hours,
+        "resume-audit": cmd_resume_audit,
+        "variance": cmd_variance,
     }
 
     handler = commands.get(cmd)
