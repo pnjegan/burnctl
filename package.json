@@ -1,6 +1,6 @@
 {
   "name": "burnctl",
-  "version": "4.0.0",
+  "version": "4.0.1",
   "description": "Real-time AI burn rate monitor for Claude Code. Tokens/min, cost/hr, retry-loop detection, waste pattern analysis. Local-only, zero pip deps.",
   "bin": {
     "burnctl": "./bin/burnctl.js"
@@ -34,13 +34,27 @@
     "node": ">=16.0.0"
   },
   "files": [
-    "bin/",
-    "*.py",
+    "_version.py",
+    "analyzer.py",
+    "bin/burnctl.js",
+    "burn_rate.py",
+    "cli.py",
+    "config.py",
+    "db.py",
+    "fix_generator.py",
+    "fix_measurement.py",
+    "fix_tracker.py",
+    "insights.py",
+    "mcp_server.py",
+    "scanner.py",
+    "server.py",
+    "waste_patterns.py",
+    "claude_ai_tracker.py",
     "templates/",
-    "tools/",
-    "README.md",
+    "tools/hooks/",
+    "CONTRIBUTING.md",
     "LICENSE",
-    "CONTRIBUTING.md"
+    "README.md"
   ],
   "publishConfig": {
     "access": "public"

@@ -4,41 +4,91 @@ const { execSync, spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const net = require('net');
 
 const { version: VERSION } = require('../package.json');
 const REPO = 'https://github.com/pnjegan/burnctl';
 const INSTALL_DIR = path.join(os.homedir(), '.burnctl');
 
-// Parse args FIRST — before any other code runs.
-// This prevents macOS `open` from ever receiving --help and misinterpreting it.
-const args = process.argv.slice(2);
+// Subcommands that pass through to python cli.py.
+// First-arg match wins; we pipe stdio and exit with the child's code.
+const SUBCOMMANDS = new Set([
+  'audit', 'burnrate', 'loops', 'block', 'statusline',
+  'fix', 'scan', 'stats', 'measure', 'backup', 'restore',
+  'realstory', 'insights', 'waste', 'show-other', 'window',
+  'export', 'fixes', 'init', 'mcp', 'keys', 'claude-ai',
+  'sync-daemon',
+]);
 
-if (args.includes('--help') || args.includes('-h')) {
-  console.log('burnctl v' + VERSION + ' — AI burn rate monitor for Claude Code');
-  console.log('');
-  console.log('Usage: burnctl [--port <n>]');
-  console.log('');
-  console.log('  --port <n>    Port to serve on (default: 8080)');
-  console.log('  --no-browser  Skip auto-opening browser');
-  console.log('  --help, -h    Show this help');
-  console.log('');
-  console.log('GitHub: https://github.com/pnjegan/burnctl');
-  console.log('npm:    npm install -g burnctl');
-  process.exit(0);
+const args = process.argv.slice(2);
+const first = args[0];
+
+// ── Subcommand pass-through (must run BEFORE --help so `burnctl audit --help` reaches cli.py)
+if (first && SUBCOMMANDS.has(first)) {
+  checkPython();
+  const { cli, cwd } = getCliPath();
+  const proc = spawn('python3', [cli, ...args], { stdio: 'inherit', cwd });
+  proc.on('exit', code => process.exit(code == null ? 0 : code));
+  process.on('SIGINT', () => { try { proc.kill('SIGINT'); } catch {} process.exit(130); });
+  process.on('SIGTERM', () => { try { proc.kill('SIGTERM'); } catch {} process.exit(143); });
+  return; // leaves the spawn alive — node stays up via the child's stdio handles
 }
 
+// ── Top-level help / version (only when no subcommand)
+if (args.includes('--help') || args.includes('-h')) {
+  printHelp();
+  process.exit(0);
+}
 if (args.includes('--version') || args.includes('-v')) {
   console.log(VERSION);
   process.exit(0);
 }
 
+// ── Default: dashboard mode (no subcommand, or first arg is "dashboard")
+dashboardMode().catch(err => {
+  console.error('burnctl: ' + err.message);
+  process.exit(1);
+});
+
+
+// ──────────────────────────────────────────────────────────────────
+// Helpers
+// ──────────────────────────────────────────────────────────────────
+
+function printHelp() {
+  console.log('burnctl v' + VERSION + ' — AI burn rate monitor for Claude Code');
+  console.log('');
+  console.log('Usage: burnctl [<subcommand> ...] [--port <n>] [--no-browser]');
+  console.log('');
+  console.log('Dashboard mode (default — auto-detects free port from 8080):');
+  console.log('  burnctl                       Start dashboard, open browser');
+  console.log('  burnctl --port 9090           Force a specific port');
+  console.log('  burnctl --no-browser          Skip browser auto-open');
+  console.log('');
+  console.log('Subcommands (pass through to cli.py):');
+  console.log('  burnctl burnrate              Live tokens/min, $/hr');
+  console.log('  burnctl loops                 Detect retry-loop activity');
+  console.log('  burnctl block                 5-hour block totals (observed)');
+  console.log('  burnctl statusline            One-line statusline output');
+  console.log('  burnctl audit [project]       JSONL waste-pattern audit');
+  console.log('  burnctl fix start "desc" --project X    Start measurement');
+  console.log('  burnctl fix result <id>       Show before/after delta');
+  console.log('  burnctl scan                  Scan new sessions');
+  console.log('  burnctl stats                 Per-account stats');
+  console.log('  burnctl backup                Hot-copy DB');
+  console.log('');
+  console.log('  --version, -v   Print version and exit');
+  console.log('  --help, -h      Show this help');
+  console.log('');
+  console.log('GitHub: https://github.com/pnjegan/burnctl');
+  console.log('npm:    npm install -g burnctl');
+}
+
 function checkPython() {
   try {
     const ver = execSync('python3 --version 2>&1').toString().trim();
-    const match = ver.match(/(\d+)\.(\d+)/);
-    if (match && parseInt(match[1]) >= 3 && parseInt(match[2]) >= 8) {
-      return true;
-    }
+    const m = ver.match(/(\d+)\.(\d+)/);
+    if (m && parseInt(m[1]) >= 3 && parseInt(m[2]) >= 8) return true;
     console.error('Python 3.8+ required. Found: ' + ver);
     process.exit(1);
   } catch (e) {
@@ -60,29 +110,22 @@ function checkClaudeData() {
     console.log('   Looked in:');
     candidates.forEach(c => console.log('     ' + c));
     console.log('   Starting dashboard anyway — it will show instructions.');
-  } else {
-    console.log('Found Claude Code data at: ' + found[0]);
   }
   return found;
 }
 
-function isPortInUse(port) {
-  try {
-    execSync(
-      'lsof -ti:' + port + ' 2>/dev/null || ' +
-      'netstat -an 2>/dev/null | grep ":' + port + ' " | grep LISTEN',
-      { stdio: 'pipe' }
-    );
-    return true;
-  } catch (e) {
-    return false;
+// Find cli.py: prefer the local checkout (dev/clone install), else clone to INSTALL_DIR.
+function getCliPath() {
+  const localCli = path.join(__dirname, '..', 'cli.py');
+  if (fs.existsSync(localCli)) {
+    return { cli: localCli, cwd: path.dirname(localCli) };
   }
+  installBurnctl();
+  return { cli: path.join(INSTALL_DIR, 'cli.py'), cwd: INSTALL_DIR };
 }
 
 function installBurnctl() {
   if (fs.existsSync(path.join(INSTALL_DIR, 'cli.py'))) {
-    // Already installed. Do NOT auto-pull — users should not have code silently
-    // updated on every launch. Run `burnctl --update` to pull latest.
     if (process.argv.includes('--update')) {
       try {
         execSync('git -C "' + INSTALL_DIR + '" pull --quiet 2>/dev/null');
@@ -93,7 +136,6 @@ function installBurnctl() {
     }
     return;
   }
-
   console.log('Installing burnctl to ' + INSTALL_DIR + '...');
   try {
     execSync('git clone --depth=1 --quiet "' + REPO + '" "' + INSTALL_DIR + '"');
@@ -117,53 +159,72 @@ function openBrowser(port) {
   }, 1500);
 }
 
-function main() {
-  // Support both --port=N and --port N
-  let port = '8080';
+// Native, cross-platform port-free check — no lsof/netstat dependency.
+function isPortFree(port) {
+  return new Promise(resolve => {
+    const srv = net.createServer();
+    srv.unref();
+    srv.once('error', () => resolve(false));
+    srv.once('listening', () => srv.close(() => resolve(true)));
+    srv.listen(port, '127.0.0.1');
+  });
+}
+
+async function findFreePort(start, end) {
+  for (let p = start; p <= end; p++) {
+    if (await isPortFree(p)) return p;
+  }
+  return null;
+}
+
+function parseExplicitPort() {
   const portEq = args.find(a => a.startsWith('--port='));
-  if (portEq) {
-    port = portEq.split('=')[1];
+  if (portEq) return portEq.split('=')[1];
+  const idx = args.indexOf('--port');
+  if (idx !== -1 && args[idx + 1]) return args[idx + 1];
+  return null;
+}
+
+async function dashboardMode() {
+  let port;
+  const explicit = parseExplicitPort();
+
+  if (explicit !== null) {
+    if (!/^\d{1,5}$/.test(explicit) || +explicit < 1 || +explicit > 65535) {
+      console.error('Invalid port number: ' + explicit);
+      process.exit(1);
+    }
+    if (!(await isPortFree(+explicit))) {
+      console.error(`Port ${explicit} is in use. Try: burnctl --port ${+explicit + 1}`);
+      process.exit(1);
+    }
+    port = +explicit;
   } else {
-    const portIdx = args.indexOf('--port');
-    if (portIdx !== -1 && args[portIdx + 1]) {
-      port = args[portIdx + 1];
+    port = await findFreePort(8080, 8090);
+    if (port == null) {
+      console.error('No free port found in 8080-8090. Try: burnctl --port <N>');
+      process.exit(1);
     }
   }
-  const noBrowser = args.includes('--no-browser');
 
-  // Validate port before it flows into any execSync call
-  if (!/^\d{1,5}$/.test(port) || parseInt(port, 10) < 1 || parseInt(port, 10) > 65535) {
-    console.error('Invalid port number: ' + port);
-    process.exit(1);
-  }
+  const noBrowser = args.includes('--no-browser');
 
   console.log('burnctl v' + VERSION);
   console.log('-'.repeat(40));
 
   checkPython();
   checkClaudeData();
-  installBurnctl();
+  const { cli, cwd } = getCliPath();
 
-  if (isPortInUse(port)) {
-    console.log('Port ' + port + ' is already in use.');
-    console.log('Try: burnctl --port 8081');
-    console.log('Or kill the process: lsof -ti:' + port + ' | xargs kill');
-    process.exit(1);
-  }
+  console.log(`burnctl dashboard → http://localhost:${port}`);
+  if (!noBrowser) openBrowser(port);
 
-  console.log('Starting dashboard on http://localhost:' + port + ' ...');
-  if (!noBrowser) {
-    openBrowser(port);
-  }
-
-  const cliArgs = [path.join(INSTALL_DIR, 'cli.py'), 'dashboard', '--port', port, '--no-browser'];
-  const proc = spawn('python3', cliArgs, {
-    stdio: 'inherit',
-    cwd: INSTALL_DIR,
-  });
-
-  proc.on('exit', code => process.exit(code || 0));
-  process.on('SIGINT', () => { proc.kill(); process.exit(0); });
+  const proc = spawn(
+    'python3',
+    [cli, 'dashboard', '--port', String(port), '--no-browser'],
+    { stdio: 'inherit', cwd }
+  );
+  proc.on('exit', code => process.exit(code == null ? 0 : code));
+  process.on('SIGINT', () => { try { proc.kill('SIGINT'); } catch {} process.exit(130); });
+  process.on('SIGTERM', () => { try { proc.kill('SIGTERM'); } catch {} process.exit(143); });
 }
-
-main();
