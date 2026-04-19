@@ -1,6 +1,6 @@
 {
   "name": "burnctl",
-  "version": "4.0.1",
+  "version": "4.0.2",
   "description": "Real-time AI burn rate monitor for Claude Code. Tokens/min, cost/hr, retry-loop detection, waste pattern analysis. Local-only, zero pip deps.",
   "bin": {
     "burnctl": "./bin/burnctl.js"

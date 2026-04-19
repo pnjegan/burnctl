@@ -17,15 +17,33 @@ import os
 import sqlite3
 import time
 from datetime import datetime
+from pathlib import Path
 
 
 DB_DEFAULT = "data/usage.db"
 
+_DB_NOT_FOUND_ERR = "No burnctl database found. Run: burnctl scan first"
 
-def _connect(db_path):
-    if not os.path.exists(db_path):
-        raise FileNotFoundError(f"DB not found at {db_path}. Run `burnctl scan` first.")
-    return sqlite3.connect(db_path)
+
+def resolve_db_path(db_path=DB_DEFAULT):
+    """Locate the usage.db file across install layouts.
+
+    Lookup order:
+      1. The path passed in, if it exists (covers cwd-relative + absolute)
+      2. ~/.burnctl/data/usage.db  (npm/git-clone install via bin/burnctl.js)
+      3. <script_dir>/data/usage.db (dev/clone install — burn_rate.py adjacent to data/)
+
+    Returns the resolved path string, or None if no DB is found anywhere.
+    """
+    if db_path and os.path.exists(db_path):
+        return db_path
+    install_db = Path.home() / ".burnctl" / "data" / "usage.db"
+    if install_db.exists():
+        return str(install_db)
+    script_db = Path(__file__).parent / "data" / "usage.db"
+    if script_db.exists():
+        return str(script_db)
+    return None
 
 
 def get_burn_rate(db_path=DB_DEFAULT, window_minutes=5):
@@ -35,8 +53,16 @@ def get_burn_rate(db_path=DB_DEFAULT, window_minutes=5):
       tokens_per_min, cost_per_min, cost_per_hour (projected at current rate),
       input_tokens, output_tokens, sessions_active, window_minutes, sampled_at
     """
+    resolved = resolve_db_path(db_path)
+    if resolved is None or not os.path.exists(resolved):
+        return {
+            "error": _DB_NOT_FOUND_ERR,
+            "tokens_per_min": 0,
+            "cost_per_min": 0,
+            "cost_per_hour": 0,
+        }
     try:
-        db = _connect(db_path)
+        db = sqlite3.connect(resolved)
         cutoff = int(time.time()) - (window_minutes * 60)
         row = db.execute(
             """
@@ -79,8 +105,11 @@ def get_block_status(db_path=DB_DEFAULT):
     does not publish per-plan block limits. Reporting a fabricated limit
     misleads users; reporting raw burn lets them apply their own intuition.
     """
+    resolved = resolve_db_path(db_path)
+    if resolved is None or not os.path.exists(resolved):
+        return {"error": _DB_NOT_FOUND_ERR}
     try:
-        db = _connect(db_path)
+        db = sqlite3.connect(resolved)
         block_start = int(time.time()) - (5 * 3600)
         row = db.execute(
             """
@@ -129,9 +158,15 @@ def detect_loops(db_path=DB_DEFAULT, lookback_minutes=10,
     `max_avg_gap_seconds`. The thresholds are deliberately conservative
     so an active human-in-the-loop session does NOT trip the detector;
     we want signal for autonomous retry storms only.
+
+    On missing/unreadable DB returns [] (silent — loop detection is
+    best-effort and should never crash a statusline hook).
     """
+    resolved = resolve_db_path(db_path)
+    if resolved is None or not os.path.exists(resolved):
+        return []
     try:
-        db = _connect(db_path)
+        db = sqlite3.connect(resolved)
         cutoff = int(time.time()) - (lookback_minutes * 60)
         rows = db.execute(
             """
@@ -170,9 +205,13 @@ def statusline(db_path=DB_DEFAULT):
 
     Format: ⚡ 142t/min | $0.84/hr | 5hr: 12.3k tok / $0.41 | Loop: ✓
     """
-    br = get_burn_rate(db_path, window_minutes=5)
-    block = get_block_status(db_path)
-    loops = detect_loops(db_path)
+    resolved = resolve_db_path(db_path)
+    if resolved is None or not os.path.exists(resolved):
+        return f"burnctl: {_DB_NOT_FOUND_ERR}"
+
+    br = get_burn_rate(resolved, window_minutes=5)
+    block = get_block_status(resolved)
+    loops = detect_loops(resolved)
 
     tpm = br.get("tokens_per_min", 0)
     cph = br.get("cost_per_hour", 0)
