@@ -1469,3 +1469,77 @@ Negative findings (clean):
 - **No loading spinners in UI** — polish item, not functionally broken.
 - **API keys plaintext in SQLite** — documented limitation in SECURITY.md; encryption-at-rest not implemented.
 - **`source_path` leaks local FS paths** (`/root/.claude/projects/...`) — stays local, never exposed via API. Acceptable for single-user tool.
+
+## [2026-04-19] Session 27
+
+### Fixed
+- PAT leaked in .git/config (`origin` URL embedded `ghp_PAW…XA3ZW1mr`) -> scrubbed via `git remote set-url`
+  Why: token was world-readable in clone, copy, or share path
+  Files: .git/config (no longer tracks the embedded credential)
+
+- npm auth token at `/root/projects/burnctl/.npmrc` had mode 666 (world-readable) -> chmod 600
+  Why: secret credential must not be world-readable
+  Files: .npmrc (in renamed-folder root; gitignored)
+
+### Added
+- `burn_rate.py` (188 lines): live burn rate (tokens/min, $/min, $/hr), 5h block totals (observed only — Anthropic does not publish quotas, so no fabricated %), conservative retry-loop detector (5+ sessions in 10 min with avg gap < 60s)
+  Why: ccusage shows past totals; nothing existed for live token velocity / loop catch
+  Files: burn_rate.py (new)
+
+- `audit_project()` and friends in `analyzer.py` (+279 lines): nine waste bins (file_reread, retry_error, dead_end, compaction_thrash, browser_wall, oververbose_tool, …) + per-bin CLAUDE.md prescriptions; JSONL heuristic detection, zero LLM calls
+  Why: turns scanner data into actionable rules with severity + why/how-to-fix text
+  Files: analyzer.py (appended; existing exports untouched)
+
+- `fix_measurement.py` (new): causal before/after measurement against the new isolated `burnctl_fix_measurements` table (auto-created via `CREATE TABLE IF NOT EXISTS` on first call); enforces 10-session minimum before reporting delta
+  Why: prevents noise-as-signal from short measurement windows; isolated table avoids touching the legacy `fix_measurements` (72 rows owned by `fix_tracker.py`)
+  Files: fix_measurement.py (new)
+
+- CLI subcommands: `burnctl burnrate`, `loops`, `block`, `statusline`, `audit [project]`, `fix start "desc" --project X`, `fix result <id>`
+  Why: surface the new modules without forcing a dashboard launch
+  Files: cli.py (HELP_TEXT + cmd_* handlers + commands dict + `fix` two-word dispatcher)
+
+- API endpoint `GET /api/burnrate` returning `{burn_rate, block_status, loops}`
+  Why: lets the web dashboard read the same live numbers as the CLI
+  Files: server.py
+
+### Removed / Renamed
+- Project rebrand: `@jeganwrites/claudash@3.3.1` → `burnctl@4.0.0` (unscoped npm name)
+  Why: positioning shift toward AI burn-rate monitor; semver major bump
+  Files: package.json; folder renamed `/root/projects/jk-usage-dashboard` → `/root/projects/burnctl`
+
+- Renamed via `git mv` (history preserved): `bin/claudash.js` → `bin/burnctl.js`, `claudash_test_runner.py` → `burnctl_test_runner.py`, `docs/homebrew/claudash.rb` → `docs/homebrew/burnctl.rb`
+  Why: filenames now match the brand
+  Files: above
+
+### Architecture Decisions
+- **Real-data-only metrics** (no fabricated block %): `burn_rate.get_block_status()` returns observed token + cost totals only; `estimated_pct_used` and `eta_to_limit` are explicitly `None`
+  Why: Anthropic does not publish per-plan limits — inventing one misleads users
+  Impact: README comparison vs ccusage shows `—` for "ETA to limit" on both tools (neither can know it)
+
+- **Backward-compat env vars**: `BURNCTL_VPS_IP || CLAUDASH_VPS_IP`, `BURNCTL_VPS_PORT || CLAUDASH_VPS_PORT`, `BURNCTL_BACKUP_DIR || CLAUDASH_BACKUP_DIR`
+  Why: don't break operators upgrading from claudash 3.x at deploy time
+  Impact: legacy env names keep working until next major; `config.py` and `cli.py` carry both
+
+- **Backup default path stays `/root/backups/claudash`**, prune regex matches both `^(?:burnctl|claudash)-…\.db$`
+  Why: existing rclone offsite sync keeps writing through the rebrand without reconfig
+  Impact: `cli.py:_default_backup_dir()` and `cli.py:_prune_backups()` carry both prefixes
+
+- **`Claudash` kept as alias key in `config.COMPACT_INSTRUCTIONS`**
+  Why: 23,309 historical session rows have `project='Claudash'` — re-tagging would split history
+  Impact: dual entry "burnctl" + "Claudash" in compact-instructions map
+
+- **Causal measurement isolated to new `burnctl_fix_measurements` table** (rather than `ALTER TABLE` on legacy `fix_measurements`)
+  Why: legacy table holds 72 rows tied to `fix_tracker.py` — schema collision risk, mixing two semantically different fix-tracker concepts is confusing
+  Impact: `fix_measurement.py` self-creates schema; legacy fix tracker untouched
+
+- **Historical docs left as-is**: `CHANGELOG.md`, `MEMORY.md`, `CLAUDASH_AUDIT.md`, `CLAUDASH_COMPLETE_WRITEUP.md`, `CLAUDASH_V2_PRD.md`, `docs/releases/2026-04-11/*` — sed pass excluded these
+  Why: they are snapshots of past state; renaming "Claudash v3.3.1" to "burnctl v3.3.1" would lie about history
+  Impact: 206 occurrences of `claudash` remain in historical docs by design
+
+### Known Issues / Not Done
+- `git push -u origin main` BLOCKED (HTTP 403). Cached credential serves GitHub user `unitedappsmaker-tech` which lacks write access to `pnjegan/burnctl`. Local commit `87365b9` is intact; nothing pushed.
+  Why deferred: needs user to either `gh auth login` as `pnjegan`, add the other account as collaborator, or mint a fresh PAT scoped to `pnjegan`
+- `git tag v4.0.0` NOT created — depends on push first
+- `npm publish burnctl@4.0.0` NOT run — user will paste fresh token after push lands
+- Homebrew formula `docs/homebrew/burnctl.rb` has placeholder sha256 `REPLACE_AFTER_TAG_PUSH` — fill once `v4.0.0` tarball exists on GitHub
+- `mcp__claudash__*` MCP tool refs in `.claude/settings.local.json` will stop matching after the MCP server key renames to `burnctl` — local-only setting, user re-grants on next prompt
