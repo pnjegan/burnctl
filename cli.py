@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Claudash — CLI entry point."""
+"""burnctl — CLI entry point."""
 
 import sys
 import os
@@ -20,10 +20,23 @@ from db import (
 
 
 HELP_TEXT = f"""
-Claudash v{VERSION} — personal Claude usage dashboard
+burnctl v{VERSION} — personal Claude usage dashboard
 
 Commands:
   dashboard     Start dashboard server on :8080 (127.0.0.1 only)
+  burnrate      Show live burn rate (tokens/min, $/hr) over last 5 min
+  loops         Detect retry-loop activity in last 10 min
+  block         Show 5-hour rolling block totals (observed; no quota guess)
+  statusline    One-line statusline output for Claude Code statusline hooks
+  audit [project]
+                Audit JSONL sessions for waste patterns (file_reread,
+                retry_error, dead_end, compaction_thrash, browser_wall,
+                oververbose_tool). Prints prescriptions + CLAUDE.md fixes.
+  fix start "desc" --project X
+                Snapshot current burn for project X, start a measurement
+                (requires 10+ sessions before result is meaningful)
+  fix result <id>
+                Show before/after delta for a measurement
   scan          Scan JSONL files for new sessions (incremental)
   scan --reprocess
                 Re-tag every existing session using the current
@@ -33,7 +46,7 @@ Commands:
   insights      Show active insights
   window        Show 5-hour window status
   export        Export last 30 days to CSV
-  backup        Hot-copy DB + JSON fixes export to ~/.claudash/backups/
+  backup        Hot-copy DB + JSON fixes export to ~/.burnctl/backups/
                 Flags: --output DIR (override path), --quiet (no stdout)
                 Retention: 24 hourly + 7 daily backups
   restore       Restore from a backup file (stops/restarts dashboard)
@@ -79,7 +92,7 @@ from claude_ai_tracker import (
 )
 
 
-_PIDFILE = "/tmp/claudash.pid"
+_PIDFILE = "/tmp/burnctl.pid"
 _pid_lock_handle = None
 
 
@@ -114,7 +127,7 @@ def _acquire_pid_lock():
         pf.seek(0)
         existing = pf.read().strip() or "?"
         pf.close()
-        print(f"Claudash already running (pid {existing}). "
+        print(f"burnctl already running (pid {existing}). "
               f"Kill it first or rm {_PIDFILE}", file=sys.stderr)
         raise SystemExit(1)
 
@@ -148,7 +161,7 @@ def cmd_dashboard():
     _pid_lock_handle = _acquire_pid_lock()
 
     import argparse
-    parser = argparse.ArgumentParser(prog="claudash dashboard", add_help=False)
+    parser = argparse.ArgumentParser(prog="burnctl dashboard", add_help=False)
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--skip-init", action="store_true")
@@ -163,16 +176,16 @@ def cmd_dashboard():
             _run_dashboard(args.port, args.no_browser, args.skip_init)
             break  # clean exit
         except KeyboardInterrupt:
-            print("\nClaudash stopped.")
+            print("\nburnctl stopped.")
             break
         except Exception as e:
             restart_count += 1
             if restart_count > MAX_RESTARTS:
-                print(f"Claudash crashed {MAX_RESTARTS} times. Giving up.")
+                print(f"burnctl crashed {MAX_RESTARTS} times. Giving up.")
                 print(f"Last error: {e}")
-                print(f"Check logs: tail /tmp/claudash.log")
+                print(f"Check logs: tail /tmp/burnctl.log")
                 break
-            print(f"Claudash crashed (attempt {restart_count}/{MAX_RESTARTS}): {e}")
+            print(f"burnctl crashed (attempt {restart_count}/{MAX_RESTARTS}): {e}")
             print(f"Restarting in {restart_delay} seconds...")
             time.sleep(restart_delay)
             restart_delay = min(restart_delay * 2, 60)
@@ -236,7 +249,7 @@ def _run_dashboard(port=8080, no_browser=False, skip_init=False):
 
     print(flush=True)
     print("  ╔══════════════════════════════╗", flush=True)
-    print(f"  ║  Claudash v{VERSION:<17s}║", flush=True)
+    print(f"  ║  burnctl v{VERSION:<17s}║", flush=True)
     print("  ╠══════════════════════════════╣", flush=True)
     print(f"  ║  Records  : {total:<17,}║", flush=True)
     print(f"  ║  Accounts : {n_accts:<17s}║", flush=True)
@@ -327,7 +340,7 @@ def cmd_init():
     conn = get_conn()
 
     print(flush=True)
-    print("  Claudash Setup", flush=True)
+    print("  burnctl Setup", flush=True)
     print("  " + "-" * 40, flush=True)
 
     detected_plan, detected_email = _detect_from_credentials()
@@ -448,8 +461,8 @@ def cmd_init():
     if tokens:
         print(f"    Window: {tokens:,} tokens per 5 hours", flush=True)
     print(flush=True)
-    print("  Fix generator (optional): claudash keys --set-provider", flush=True)
-    print("  Skip this to use Claudash without LLM features.", flush=True)
+    print("  Fix generator (optional): burnctl keys --set-provider", flush=True)
+    print("  Skip this to use burnctl without LLM features.", flush=True)
     print(flush=True)
     print("  Starting dashboard...", flush=True)
     print(flush=True)
@@ -591,7 +604,7 @@ def cmd_fix_add():
     projects = [r[0] for r in project_rows if r[0]]
 
     print()
-    print("  Record a fix — Claudash Fix Tracker")
+    print("  Record a fix — burnctl Fix Tracker")
     print(f"  {'─' * 50}")
     if projects:
         print("  Projects in the DB:")
@@ -662,7 +675,7 @@ def cmd_fix_add():
 
 
 def cmd_fix_generate():
-    """`claudash fix generate <waste_event_id>` — v2-F4 Phase 1.
+    """`burnctl fix generate <waste_event_id>` — v2-F4 Phase 1.
 
     Generates a CLAUDE.md rule proposal for one waste event via the
     Anthropic API, persists it as a `proposed` fix, and prints the
@@ -709,7 +722,7 @@ def cmd_fix_generate():
     else:
         print("Fix could not be persisted to DB (see logs); rule is printed above.")
     print("To apply manually: copy rule above into your project CLAUDE.md")
-    print("Phase 2 will add: claudash fix apply {fix_id}".format(fix_id=fix_id))
+    print("Phase 2 will add: burnctl fix apply {fix_id}".format(fix_id=fix_id))
     print()
 
 
@@ -811,14 +824,14 @@ def cmd_mcp():
     mcp_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mcp_server.py")
     snippet = {
         "mcpServers": {
-            "claudash": {
+            "burnctl": {
                 "command": "python3",
                 "args": [mcp_path],
             }
         }
     }
     print()
-    print("  Claudash MCP server")
+    print("  burnctl MCP server")
     print(f"  {'-' * 50}")
     print("  Add this to ~/.claude/settings.json (merge with any existing")
     print("  `mcpServers` block — don't overwrite the whole file):")
@@ -1275,28 +1288,33 @@ def _default_backup_dir():
     automatically picked up by the existing offsite sync (Google Drive /
     other rclone remotes).
 
-    Override via `--output DIR` on the CLI or `CLAUDASH_BACKUP_DIR` env var.
+    Override via `--output DIR` on the CLI or `BURNCTL_BACKUP_DIR` env var.
+    Legacy `CLAUDASH_BACKUP_DIR` still honored for upgraders.
+    Default path stays `/root/backups/claudash` so existing rclone offsite
+    sync keeps writing to the same location through the rebrand.
     """
-    override = os.environ.get("CLAUDASH_BACKUP_DIR")
+    override = os.environ.get("BURNCTL_BACKUP_DIR") or os.environ.get("CLAUDASH_BACKUP_DIR")
     if override:
         return os.path.expanduser(override)
     return "/root/backups/claudash"
 
 
 def _backup_filename(now=None):
-    """claudash-YYYYMMDD_HH.db — hourly precision."""
+    """burnctl-YYYYMMDD_HH.db — hourly precision."""
     now = now or datetime.now(timezone.utc)
-    return f"claudash-{now.strftime('%Y%m%d_%H')}.db"
+    return f"burnctl-{now.strftime('%Y%m%d_%H')}.db"
 
 
 def _prune_backups(backup_dir, keep_hourly=24, keep_daily=7):
     """Keep the most recent N hourly backups plus one backup per calendar day
     for the last M days. Delete the rest. Returns (kept_count, deleted_count).
 
-    Filename shape: claudash-YYYYMMDD_HH.db (also matches *.json sidecars).
+    Filename shape: burnctl-YYYYMMDD_HH.db (also matches *.json sidecars).
+    Legacy claudash-YYYYMMDD_HH.db files from before the rebrand are also
+    pruned by the same rules.
     """
     import re as _re
-    pat = _re.compile(r"^claudash-(\d{8})_(\d{2})\.db$")
+    pat = _re.compile(r"^(?:burnctl|claudash)-(\d{8})_(\d{2})\.db$")
     files = []
     for fname in os.listdir(backup_dir):
         m = pat.match(fname)
@@ -1407,7 +1425,7 @@ def cmd_backup():
 
     db_size = os.path.getsize(db_path) / (1024 * 1024)
     if not quiet:
-        print(f"Claudash backup — {now.strftime('%Y-%m-%d %H:%M UTC')}")
+        print(f"burnctl backup — {now.strftime('%Y-%m-%d %H:%M UTC')}")
         print(f"  DB:         {db_path}  ({db_size:.2f} MB)")
         print(f"  JSON:       {json_path}  "
               f"(fixes={len(fixes)}, measurements={len(meas)})")
@@ -1574,9 +1592,9 @@ def _setup_fix_provider(force_anthropic=False):
         choice = "1"
     else:
         print()
-        print("  Claudash Fix Generator \u2014 Provider Setup")
+        print("  burnctl Fix Generator \u2014 Provider Setup")
         print("  " + "\u2500" * 40)
-        print("  Claudash uses Claude to fix Claude Code waste.")
+        print("  burnctl uses Claude to fix Claude Code waste.")
         print("  All providers below run Anthropic models only.")
         print()
         print("  [1] Anthropic API direct    ~$0.006/fix  console.anthropic.com")
@@ -1601,7 +1619,7 @@ def _setup_fix_provider(force_anthropic=False):
         print()
         print(f"  Provider saved: {info['label']}")
         print(f"  Cost: {info['cost_per_fix']} per fix")
-        print("  Test with: claudash fix generate <waste_event_id>")
+        print("  Test with: burnctl fix generate <waste_event_id>")
         print()
 
     elif choice == "2":
@@ -1620,7 +1638,7 @@ def _setup_fix_provider(force_anthropic=False):
         print(f"  Cost: {info['cost_per_fix']} per fix")
         if not boto3_ok:
             print("  NOTE: boto3 is not installed. Install with: pip install boto3")
-        print("  Test with: claudash fix generate <waste_event_id>")
+        print("  Test with: burnctl fix generate <waste_event_id>")
         print()
 
     elif choice == "3":
@@ -1641,14 +1659,14 @@ def _setup_fix_provider(force_anthropic=False):
         print(f"  Provider saved: {info['label']}")
         print(f"  Model: {model}")
         print(f"  Cost: {info['cost_per_fix']} per fix")
-        print("  Test with: claudash fix generate <waste_event_id>")
+        print("  Test with: burnctl fix generate <waste_event_id>")
         print()
 
     elif choice == "4":
         set_setting(conn, "fix_provider", "")
         print()
-        print("  Skipped. Run `claudash keys --set-provider` when ready.")
-        print("  (Claudash will continue to work without fix generation.)")
+        print("  Skipped. Run `burnctl keys --set-provider` when ready.")
+        print("  (burnctl will continue to work without fix generation.)")
         print()
     else:
         print("  Invalid choice. Cancelled.")
@@ -1771,6 +1789,117 @@ def cmd_claude_ai():
     conn.close()
 
 
+def cmd_audit():
+    """`burnctl audit [project]` — JSONL waste-pattern audit."""
+    from analyzer import audit_project
+    project = sys.argv[2] if len(sys.argv) >= 3 else None
+    r = audit_project(project)
+
+    label = f"— {project}" if project else "(all projects)"
+    print()
+    print(f"=== burnctl audit {label} ===")
+    print(f"Sessions analyzed: {r['sessions_analyzed']}")
+    if r["sessions_analyzed"] == 0:
+        print("No JSONL sessions found.")
+        return
+
+    print()
+    print("Top waste bins (by tokens):")
+    for bin_name, data in r["top_waste"]:
+        if data["count"] > 0:
+            print(f"  {bin_name:20} {data['count']:>5} occurrences  {data['tokens']:>10,} tokens")
+
+    if not r["prescriptions"]:
+        print()
+        print("No prescriptions — nothing actionable detected.")
+        return
+
+    print()
+    print("Prescriptions:")
+    for p in r["prescriptions"]:
+        print()
+        print(f"  [{p['severity']}] {p['title']}  ({p['bin']})")
+        print(f"  Occurrences: {p['occurrences']}   Wasted tokens: {p['wasted_tokens']:,}")
+        print(f"  Why: {p['why']}")
+        print(f"  CLAUDE.md fix:")
+        for line in p["claude_md_fix"].split("\n"):
+            print(f"    {line}")
+
+
+def cmd_fix_start():
+    """`burnctl fix start "description" --project X` — start a measurement."""
+    import argparse
+    parser = argparse.ArgumentParser(prog="burnctl fix start")
+    parser.add_argument("description", help="Description of the fix")
+    parser.add_argument("--project", required=True, help="Project name (LIKE %X% match)")
+    args = parser.parse_args(sys.argv[3:])
+    from fix_measurement import start_fix
+    start_fix(args.description, args.project)
+
+
+def cmd_fix_result():
+    """`burnctl fix result <id>` — show delta for a measurement."""
+    if len(sys.argv) < 4:
+        print("Usage: burnctl fix result <measurement_id>")
+        sys.exit(1)
+    try:
+        mid = int(sys.argv[3])
+    except ValueError:
+        print(f"Invalid measurement ID: {sys.argv[3]}")
+        sys.exit(1)
+    from fix_measurement import check_fix
+    check_fix(mid)
+
+
+def cmd_burnrate():
+    """Print live burn rate (tokens/min, $/min, $/hr projected)."""
+    from burn_rate import get_burn_rate
+    br = get_burn_rate()
+    if "error" in br:
+        print(f"ERROR: {br['error']}")
+        sys.exit(1)
+    print(f"Burn rate (last {br['window_minutes']} min):")
+    print(f"  {br['tokens_per_min']} tokens/min")
+    print(f"  ${br['cost_per_min']}/min  (${br['cost_per_hour']}/hr projected)")
+    print(f"  {br['sessions_active']} active sessions")
+
+
+def cmd_loops():
+    """Detect retry-loop activity (5+ sessions in 10 min, avg gap < 60s)."""
+    from burn_rate import detect_loops
+    loops = detect_loops()
+    if not loops:
+        print("✓ No retry loops detected in last 10 min")
+        return
+    print(f"⚠  {len(loops)} loop(s) detected:")
+    for lp in loops:
+        print(f"  {lp['project']}: {lp['session_count']} sessions, "
+              f"avg gap {lp['avg_gap_seconds']}s, "
+              f"${lp['total_cost_usd']}  [{lp['severity']}]")
+
+
+def cmd_block():
+    """Show 5-hour block totals (observed only — no quota inference)."""
+    from burn_rate import get_block_status
+    block = get_block_status()
+    if "error" in block:
+        print(f"ERROR: {block['error']}")
+        sys.exit(1)
+    print(f"5-hour block (observed):")
+    print(f"  Tokens used:   {block['block_tokens_used']:,}")
+    print(f"  Cost:          ${block['block_cost_usd']}")
+    print(f"  Sessions:      {block['session_count']}")
+    if block.get("block_resets_in"):
+        print(f"  Window rolls:  {block['block_resets_in']}")
+    print(f"  {block['note']}")
+
+
+def cmd_statusline():
+    """One-line statusline output for Claude Code statusline hooks."""
+    from burn_rate import statusline
+    print(statusline())
+
+
 def main():
     if len(sys.argv) < 2 or sys.argv[1] in ("--help", "-h", "help"):
         print(HELP_TEXT.format(vps_ip=VPS_IP))
@@ -1778,7 +1907,7 @@ def main():
 
     cmd = sys.argv[1].lower()
 
-    # Two-word commands: `fix add`, `fix generate <id>`
+    # Two-word commands: `fix add`, `fix generate <id>`, `fix start ...`, `fix result <id>`
     if cmd == "fix":
         sub = sys.argv[2] if len(sys.argv) >= 3 else ""
         if sub == "add":
@@ -1787,14 +1916,24 @@ def main():
         if sub == "generate":
             cmd_fix_generate()
             return
+        if sub == "start":
+            cmd_fix_start()
+            return
+        if sub == "result":
+            cmd_fix_result()
+            return
         if sub in ("-h", "--help", "help", ""):
             print("Usage:")
             print("  python3 cli.py fix add")
             print("  python3 cli.py fix generate <waste_event_id>")
+            print('  python3 cli.py fix start "<description>" --project X')
+            print("  python3 cli.py fix result <measurement_id>")
             sys.exit(0)
         print("Usage:")
         print("  python3 cli.py fix add")
         print("  python3 cli.py fix generate <waste_event_id>")
+        print('  python3 cli.py fix start "<description>" --project X')
+        print("  python3 cli.py fix result <measurement_id>")
         sys.exit(1)
 
     commands = {
@@ -1816,6 +1955,11 @@ def main():
         "realstory": cmd_realstory,
         "backup": cmd_backup,
         "restore": cmd_restore,
+        "burnrate": cmd_burnrate,
+        "loops": cmd_loops,
+        "block": cmd_block,
+        "statusline": cmd_statusline,
+        "audit": cmd_audit,
     }
 
     handler = commands.get(cmd)

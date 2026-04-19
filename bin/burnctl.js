@@ -6,24 +6,24 @@ const fs = require('fs');
 const os = require('os');
 
 const { version: VERSION } = require('../package.json');
-const REPO = 'https://github.com/pnjegan/claudash';
-const INSTALL_DIR = path.join(os.homedir(), '.claudash');
+const REPO = 'https://github.com/pnjegan/burnctl';
+const INSTALL_DIR = path.join(os.homedir(), '.burnctl');
 
 // Parse args FIRST — before any other code runs.
 // This prevents macOS `open` from ever receiving --help and misinterpreting it.
 const args = process.argv.slice(2);
 
 if (args.includes('--help') || args.includes('-h')) {
-  console.log('Claudash v' + VERSION + ' — Claude Code usage intelligence');
+  console.log('burnctl v' + VERSION + ' — AI burn rate monitor for Claude Code');
   console.log('');
-  console.log('Usage: claudash [--port <n>]');
+  console.log('Usage: burnctl [--port <n>]');
   console.log('');
   console.log('  --port <n>    Port to serve on (default: 8080)');
   console.log('  --no-browser  Skip auto-opening browser');
   console.log('  --help, -h    Show this help');
   console.log('');
-  console.log('GitHub: https://github.com/pnjegan/claudash');
-  console.log('npm:    npm install -g @jeganwrites/claudash');
+  console.log('GitHub: https://github.com/pnjegan/burnctl');
+  console.log('npm:    npm install -g burnctl');
   process.exit(0);
 }
 
@@ -79,14 +79,14 @@ function isPortInUse(port) {
   }
 }
 
-function installClaudash() {
+function installBurnctl() {
   if (fs.existsSync(path.join(INSTALL_DIR, 'cli.py'))) {
     // Already installed. Do NOT auto-pull — users should not have code silently
-    // updated on every launch. Run `claudash --update` to pull latest.
+    // updated on every launch. Run `burnctl --update` to pull latest.
     if (process.argv.includes('--update')) {
       try {
         execSync('git -C "' + INSTALL_DIR + '" pull --quiet 2>/dev/null');
-        console.log('Claudash updated');
+        console.log('burnctl updated');
       } catch (e) {
         console.error('Update failed (offline or not a git repo)');
       }
@@ -94,10 +94,10 @@ function installClaudash() {
     return;
   }
 
-  console.log('Installing Claudash to ' + INSTALL_DIR + '...');
+  console.log('Installing burnctl to ' + INSTALL_DIR + '...');
   try {
     execSync('git clone --depth=1 --quiet "' + REPO + '" "' + INSTALL_DIR + '"');
-    console.log('Claudash installed');
+    console.log('burnctl installed');
   } catch (e) {
     console.error('Failed to clone from GitHub: ' + e.message);
     console.error('Check your internet connection or visit: ' + REPO);
@@ -137,16 +137,16 @@ function main() {
     process.exit(1);
   }
 
-  console.log('Claudash v' + VERSION);
+  console.log('burnctl v' + VERSION);
   console.log('-'.repeat(40));
 
   checkPython();
   checkClaudeData();
-  installClaudash();
+  installBurnctl();
 
   if (isPortInUse(port)) {
     console.log('Port ' + port + ' is already in use.');
-    console.log('Try: claudash --port 8081');
+    console.log('Try: burnctl --port 8081');
     console.log('Or kill the process: lsof -ti:' + port + ' | xargs kill');
     process.exit(1);
   }

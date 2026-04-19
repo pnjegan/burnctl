@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Claudash OAuth sync — push claude.ai usage to a Claudash server using
+"""burnctl OAuth sync — push claude.ai usage to a burnctl server using
 Claude Code's existing OAuth access token.
 
 This is the recommended collector for anyone who uses Claude Code: it
@@ -12,7 +12,7 @@ companion tools/mac-sync.py script instead.
 Works on Linux, macOS, and Windows. Pure Python stdlib. Zero pip deps.
 
 Usage:
-  1. On your Claudash server:
+  1. On your burnctl server:
        python3 cli.py keys
      Copy the sync_token value.
   2. Edit this file, set SYNC_TOKEN to that value, and VPS_IP to your
@@ -121,7 +121,7 @@ def _bearer_request(url, access_token, timeout=15):
     req = Request(url)
     req.add_header("Authorization", f"Bearer {access_token}")
     req.add_header("Accept", "application/json")
-    req.add_header("User-Agent", "Claudash-oauth-sync/1.0")
+    req.add_header("User-Agent", "burnctl-oauth-sync/1.0")
     ctx = ssl.create_default_context()
     try:
         with urlopen(req, timeout=timeout, context=ctx) as resp:
@@ -206,9 +206,9 @@ def fetch_usage(access_token, org_id):
     }, None
 
 
-# ─── Push to Claudash server ─────────────────────────────────────
+# ─── Push to burnctl server ─────────────────────────────────────
 
-def push_to_claudash(access_token, org_id, email, usage, plan):
+def push_to_burnctl(access_token, org_id, email, usage, plan):
     url = f"http://{VPS_IP}:{VPS_PORT}/api/claude-ai/sync"
     payload = {
         "session_key": access_token,  # stored verbatim on the server
@@ -243,7 +243,7 @@ def main():
     if not SYNC_TOKEN:
         print("ERROR: SYNC_TOKEN is empty.", file=sys.stderr)
         print("", file=sys.stderr)
-        print("Get your token on the Claudash server:", file=sys.stderr)
+        print("Get your token on the burnctl server:", file=sys.stderr)
         print("  python3 cli.py keys", file=sys.stderr)
         print("", file=sys.stderr)
         print("Then edit this file and set SYNC_TOKEN at the top.", file=sys.stderr)
@@ -290,7 +290,7 @@ def main():
             print(f"  {src['source']}: {email} ({plan}) — usage fetch failed ({usage_err})", file=sys.stderr)
             usage = None
 
-        ok, resp = push_to_claudash(token, org_id, email, usage, plan)
+        ok, resp = push_to_burnctl(token, org_id, email, usage, plan)
         if ok:
             pct = (usage or {}).get("pct_used", 0)
             pct_str = f" — {pct:.1f}%" if usage else ""
@@ -300,7 +300,7 @@ def main():
             print(f"  {src['source']}: push failed — {resp.get('error') if isinstance(resp, dict) else resp}", file=sys.stderr)
 
     print()
-    print(f"Claudash OAuth sync complete: {pushed}/{len(sources)} accounts pushed")
+    print(f"burnctl OAuth sync complete: {pushed}/{len(sources)} accounts pushed")
     sys.exit(0 if pushed > 0 else 3)
 
 

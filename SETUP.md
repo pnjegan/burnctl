@@ -1,4 +1,4 @@
-# Claudash Setup Guide
+# burnctl Setup Guide
 
 Personal Claude usage dashboard. Tracks token consumption, cost, cache ROI,
 5-hour window burn, and per-project model efficiency across your Max/Pro/API
@@ -15,8 +15,8 @@ accounts. Zero pip dependencies, single SQLite file, single HTML page.
 ## Quick start (5 minutes)
 
 ```bash
-git clone https://github.com/pnjegan/claudash
-cd claudash
+git clone https://github.com/pnjegan/burnctl
+cd burnctl
 python3 cli.py dashboard
 # Opens at http://localhost:8080
 ```
@@ -40,7 +40,7 @@ open http://localhost:8080
 If you want the banner to show your VPS IP, set an env var before launching:
 
 ```bash
-export CLAUDASH_VPS_IP=your-vps-ip
+export BURNCTL_VPS_IP=your-vps-ip
 python3 cli.py dashboard
 ```
 
@@ -81,7 +81,7 @@ paste it into screenshots, chat transcripts, or commit it to source.
 
 The Mac-side collector reads your Chrome/Vivaldi cookies, calls the
 undocumented `claude.ai/api/organizations/{id}/usage` endpoint, and pushes the
-result to Claudash. This lets Claudash show your *combined* window burn
+result to burnctl. This lets burnctl show your *combined* window burn
 (Claude Code + browser) rather than just the JSONL side.
 
 ```bash
@@ -131,6 +131,6 @@ crontab -e
 ## Uninstall
 
 ```bash
-rm -rf ~/claudash
+rm -rf ~/burnctl
 # Your JSONL logs under ~/.claude/projects/ are untouched.
 ```

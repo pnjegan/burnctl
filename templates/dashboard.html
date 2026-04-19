@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Claudash</title>
+<title>burnctl</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap');
 
@@ -764,7 +764,7 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 
 <header class="header">
   <div class="brand">
-    <span class="name">Claudash</span>
+    <span class="name">burnctl</span>
     <span class="version">v{{ VERSION }}</span>
   </div>
   <nav class="tabs" id="tabs"></nav>
@@ -841,9 +841,9 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
     <div class="insights-list" id="ins-list"></div>
   </section>
 
-  <!-- What Claudash Found -->
+  <!-- What burnctl Found -->
   <section class="section" id="stories-section" style="display:none;">
-    <h2 class="section-title">What Claudash Found <span class="count" id="story-count">0</span></h2>
+    <h2 class="section-title">What burnctl Found <span class="count" id="story-count">0</span></h2>
     <div id="story-grid" style="display:grid; grid-template-columns:1fr 1fr; gap:16px;"></div>
   </section>
 
@@ -1781,7 +1781,7 @@ function authHeaders() {
     const dbSize = data.db_size_mb || 0;
     const lastScan = data.last_scan ? new Date(data.last_scan * 1000).toISOString().slice(11,16) : '—';
     $('footer').textContent =
-      'Claudash v' + (data.version || '?') + ' · ' + fmtNum(rows) + ' records · ' + dbSize + 'MB · last scan ' + lastScan + ' UTC';
+      'burnctl v' + (data.version || '?') + ' · ' + fmtNum(rows) + ' records · ' + dbSize + 'MB · last scan ' + lastScan + ' UTC';
     $('scan-info').textContent = 'last scan ' + timeAgo(data.last_scan);
   }
 

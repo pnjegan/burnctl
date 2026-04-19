@@ -1,25 +1,34 @@
 {
-  "name": "@jeganwrites/claudash",
-  "version": "3.3.1",
-  "description": "Claude Code usage intelligence dashboard",
+  "name": "burnctl",
+  "version": "4.0.0",
+  "description": "Real-time AI burn rate monitor for Claude Code. Tokens/min, cost/hr, retry-loop detection, waste pattern analysis. Local-only, zero pip deps.",
   "bin": {
-    "claudash": "./bin/claudash.js"
+    "burnctl": "./bin/burnctl.js"
   },
   "scripts": {
-    "start": "node bin/claudash.js"
+    "start": "node bin/burnctl.js"
   },
   "keywords": [
     "claude",
     "claude-code",
-    "usage",
-    "dashboard",
-    "ai"
+    "anthropic",
+    "burn-rate",
+    "token-usage",
+    "cost-tracking",
+    "rate-limit",
+    "developer-tools",
+    "cli",
+    "dashboard"
   ],
   "author": "Jegan Nagarajan",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/pnjegan/claudash"
+    "url": "git+https://github.com/pnjegan/burnctl.git"
+  },
+  "homepage": "https://github.com/pnjegan/burnctl#readme",
+  "bugs": {
+    "url": "https://github.com/pnjegan/burnctl/issues"
   },
   "engines": {
     "node": ">=16.0.0"

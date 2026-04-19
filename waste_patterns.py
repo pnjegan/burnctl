@@ -1,4 +1,4 @@
-"""Waste pattern detection — Claudash intelligence layer.
+"""Waste pattern detection — burnctl intelligence layer.
 
 Detects four patterns of wasteful Claude Code usage:
 
@@ -125,7 +125,7 @@ def _detect_floundering(tool_calls):
 
     Density-based, not consecutive: real Claude Code sessions interleave
     Reads/Greps/Edits between retries, so the legacy "4 in a row" rule
-    never fired (see CLAUDASH_AUDIT.md §7 flag 1 — top Tidify session had
+    never fired (see BURNCTL_AUDIT.md §7 flag 1 — top Tidify session had
     7 repeats of one Bash invocation but longest consecutive run was 1).
     Intentional re-runs stay excluded because identical-input calls that
     are spread widely (>FLOUNDER_WINDOW apart) are not flagged."""

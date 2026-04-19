@@ -432,7 +432,7 @@ def init_db():
                     (model,),
                 )
             print(
-                "  [claudash] Migrated openai_compat → openrouter (URL matched openrouter.ai).",
+                "  [burnctl] Migrated openai_compat → openrouter (URL matched openrouter.ai).",
                 flush=True,
             )
         else:
@@ -440,9 +440,9 @@ def init_db():
                 "UPDATE settings SET value = '' WHERE key = 'fix_provider'"
             )
             print(
-                "  [claudash] v2.0.1 removed the generic OpenAI-compatible provider. "
+                "  [burnctl] v2.0.1 removed the generic OpenAI-compatible provider. "
                 "Non-Anthropic endpoints (Groq/Azure/Ollama) are no longer supported.\n"
-                "  Run: claudash keys --set-provider  to pick Anthropic / Bedrock / OpenRouter.",
+                "  Run: burnctl keys --set-provider  to pick Anthropic / Bedrock / OpenRouter.",
                 flush=True,
             )
 

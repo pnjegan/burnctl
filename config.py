@@ -1,4 +1,4 @@
-"""Claudash configuration.
+"""burnctl configuration.
 
 Edit this file on first run, or use the browser UI at /accounts to manage
 accounts after the DB is seeded. Config.py only seeds the database once — the
@@ -7,11 +7,13 @@ live source of truth after that is the `accounts` table in data/usage.db.
 import os
 
 # ─── Host settings ───────────────────────────────────────────────
-# If you run Claudash on a VPS and reach it via SSH tunnel, set
-# CLAUDASH_VPS_IP in your environment so banners and help text show
+# If you run burnctl on a VPS and reach it via SSH tunnel, set
+# BURNCTL_VPS_IP in your environment so banners and help text show
 # the correct host. Defaults to "localhost" for a same-machine install.
-VPS_IP = os.environ.get("CLAUDASH_VPS_IP", "localhost")
-VPS_PORT = int(os.environ.get("CLAUDASH_VPS_PORT", "8080"))
+# Legacy CLAUDASH_VPS_IP / CLAUDASH_VPS_PORT are still honored for
+# operators upgrading from claudash 3.x — remove next major.
+VPS_IP = os.environ.get("BURNCTL_VPS_IP") or os.environ.get("CLAUDASH_VPS_IP", "localhost")
+VPS_PORT = int(os.environ.get("BURNCTL_VPS_PORT") or os.environ.get("CLAUDASH_VPS_PORT", "8080"))
 
 # ─── Account Setup ───────────────────────────────────────────────
 # Add your Claude accounts here. These are the seed values — once the
@@ -43,7 +45,7 @@ ACCOUNTS = {
 }
 
 # ─── Project Map ─────────────────────────────────────────────────
-# Maps folder-name keywords → project labels. Claudash walks the JSONL
+# Maps folder-name keywords → project labels. burnctl walks the JSONL
 # folder paths under each account's data_paths and looks for any of
 # these substrings (case-insensitive) in the path.
 #
@@ -65,7 +67,7 @@ PROJECT_MAP = {}
 UNKNOWN_PROJECT = "Other"
 
 # ─── Daily budget per account (USD, API-equivalent) ──────────────
-# Set per account_id. Claudash compares today's cost to this value
+# Set per account_id. burnctl compares today's cost to this value
 # and fires BUDGET_WARNING / BUDGET_EXCEEDED insights.
 # Set to 0 (or omit an account) to disable budget tracking.
 #
@@ -100,7 +102,7 @@ CLAUDE_AI_ACCOUNTS = []
 COST_TARGETS = {}
 
 # ─── v2-F3: /compact direction templates per project ──────────────
-# When Claudash detects a BAD_COMPACT event, it surfaces a suggested
+# When burnctl detects a BAD_COMPACT event, it surfaces a suggested
 # /compact invocation so the user can retain the key context on the
 # next pass. Keyed by project name — add entries for your own projects.
 # Fallback is COMPACT_INSTRUCTIONS["default"].
@@ -112,6 +114,10 @@ COMPACT_INSTRUCTIONS = {
     "WikiLoop": (
         "/compact Focus on: articles being compiled, "
         "WikiScore results, pending gap topics"
+    ),
+    "burnctl": (
+        "/compact Focus on: current bug/feature in progress, "
+        "files modified this session, verification gates remaining"
     ),
     "Claudash": (
         "/compact Focus on: current bug/feature in progress, "

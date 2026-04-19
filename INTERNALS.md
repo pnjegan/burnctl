@@ -1,10 +1,10 @@
-# Claudash — Internals
+# burnctl — Internals
 
-This document is a working map of every major subsystem in Claudash, for the
+This document is a working map of every major subsystem in burnctl, for the
 author. It is intentionally dense. Every claim is sourced to `file:line`.
 Where the implementation is rough, that is called out explicitly.
 
-Repo root: `/root/projects/jk-usage-dashboard/`.
+Repo root: `/root/projects/burnctl/`.
 
 ---
 
@@ -17,7 +17,7 @@ Claude Code writes one JSONL file per conversation-session under
 working directory with `/` replaced by `-`. For this repo the directory is:
 
 ```
-~/.claude/projects/-root-projects-jk-usage-dashboard/
+~/.claude/projects/-root-projects-burnctl/
     0973e545-22d9-47c9-bd86-3f63db150c32.jsonl   # one file per session
     709337c5-707e-4f36-bb53-0333456767c1.jsonl
     ...
@@ -98,7 +98,7 @@ scrubbed). Field-by-field commentary follows.
   "timestamp": "2026-04-14T05:05:56.996Z",
   "userType": "external",
   "entrypoint": "cli",
-  "cwd": "/root/projects/jk-usage-dashboard",
+  "cwd": "/root/projects/burnctl",
   "sessionId": "0973e545-22d9-47c9-bd86-3f63db150c32",
   "version": "2.1.105",
   "gitBranch": "main"
@@ -392,7 +392,7 @@ Composite indexes added later (`db.py:108-111`):
 | `idx_sessions_model` | `model` | rightsizing `WHERE model LIKE '%opus%'` |
 | `idx_sessions_account_ts` | `(account, timestamp)` | `account_metrics` etc. do `WHERE account=? AND timestamp >= ?` — the single-column indexes forced full-range scans then filtered. |
 | `idx_sessions_project_ts` | `(project, timestamp)` | waste queries filter `project=? AND timestamp >= ?` (30-day outlier window in `waste_patterns.py:243-247`) |
-| `idx_sessions_account_project` | `(account, project)` | project rollup per account in `analyzer.project_metrics` + `claudash_project` MCP tool |
+| `idx_sessions_account_project` | `(account, project)` | project rollup per account in `analyzer.project_metrics` + `burnctl_project` MCP tool |
 
 ### 3.5 Other tables
 
@@ -476,7 +476,7 @@ The same formula is used as Dimension 1 of the efficiency score
 ### 4.4 The 5-hour window
 
 Anthropic enforces a rolling 5-hour token budget per account (the "window").
-Claudash approximates this with UTC epoch-modulo boundaries:
+burnctl approximates this with UTC epoch-modulo boundaries:
 
 ```python
 window_seconds = MAX_WINDOW_HOURS * 3600   # 18000
@@ -685,11 +685,11 @@ i.e. the one where gains move the total most (`analyzer.py:799`).
 ### 8.1 Two windows, two APIs
 
 - **Claude Code** burns the rolling 5h window via the API Claude Code
-  calls when you run `claude`. Claudash reconstructs this from the local
+  calls when you run `claude`. burnctl reconstructs this from the local
   JSONL logs (§4.4).
 - **claude.ai web chat** burns the *same* 5h window from the other side
   (browser messages). That burn is visible only via
-  `https://claude.ai/api/organizations/{org_id}/usage`. Claudash surfaces
+  `https://claude.ai/api/organizations/{org_id}/usage`. burnctl surfaces
   both and optionally combines them in the `window_combined_risk` insight.
 
 `claude_ai_tracker.fetch_usage` (`claude_ai_tracker.py:114-196`) hits the
@@ -768,9 +768,9 @@ configured via `~/.claude/settings.json` / `claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
-    "claudash": {
+    "burnctl": {
       "command": "python3",
-      "args": ["/absolute/path/to/claudash/mcp_server.py"]
+      "args": ["/absolute/path/to/burnctl/mcp_server.py"]
     }
   }
 }
@@ -798,21 +798,21 @@ returning a JSON-serializable dict, wrapped in the MCP
 
 | tool | returns | handler |
 |------|---------|---------|
-| `claudash_summary` | per-account: window_pct, ROI, cache hit rate, sessions_today, 30-day cost, top project | `_tool_claudash_summary` `mcp_server.py:62-85` |
-| `claudash_project` | detailed project metrics (requires `project_name` arg) | `mcp_server.py:88-127` |
-| `claudash_window` | per-account: window pct, burn rate, predicted exhaust ISO, best start hour | `mcp_server.py:130-157` |
-| `claudash_insights` | active insights list with priority mapping (red/window_risk/etc. → "critical") | `mcp_server.py:160-187` |
-| `claudash_action_center` | top 3 ranked actions: budget-exceeded, floundering projects, Opus overuse, compaction gap | `mcp_server.py:190-251` |
+| `burnctl_summary` | per-account: window_pct, ROI, cache hit rate, sessions_today, 30-day cost, top project | `_tool_burnctl_summary` `mcp_server.py:62-85` |
+| `burnctl_project` | detailed project metrics (requires `project_name` arg) | `mcp_server.py:88-127` |
+| `burnctl_window` | per-account: window pct, burn rate, predicted exhaust ISO, best start hour | `mcp_server.py:130-157` |
+| `burnctl_insights` | active insights list with priority mapping (red/window_risk/etc. → "critical") | `mcp_server.py:160-187` |
+| `burnctl_action_center` | top 3 ranked actions: budget-exceeded, floundering projects, Opus overuse, compaction gap | `mcp_server.py:190-251` |
 
 ### 9.3 Example flow
 
 User in a Claude Code session asks "how much did Tidify cost this month?":
 
-1. Claude Code sees `claudash_project` in its tool list (populated at
+1. Claude Code sees `burnctl_project` in its tool list (populated at
    startup via `tools/list`).
 2. Claude invokes `tools/call` with
-   `{name: "claudash_project", arguments: {project_name: "Tidify"}}`.
-3. `mcp_server.handle_request` routes to `_tool_claudash_project`
+   `{name: "burnctl_project", arguments: {project_name: "Tidify"}}`.
+3. `mcp_server.handle_request` routes to `_tool_burnctl_project`
    (`mcp_server.py:88-127`).
 4. Handler opens SQLite, calls `project_metrics(conn, "all")`, finds the
    matching project (case-insensitive), runs two follow-up SQL queries for

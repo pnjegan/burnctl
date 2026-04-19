@@ -1411,3 +1411,61 @@ Negative findings (clean):
 - **SIGKILL case unchanged**: signal handler can't catch SIGKILL. Pidfile still leaks if someone `kill -9` the process, but the kernel releases the flock anyway so the next start still succeeds (file content gets overwritten). Documented explicitly in the _acquire_pid_lock docstring.
 - **Pre-existing cron's `tables-latest.json` / `fixes-latest.json` outputs remain**: the cron writes these as latest-symlinks; our `cli.py backup` doesn't. Could add in v3.4 for parity.
 - All Deferred bugs above carried forward to future sessions.
+
+## [2026-04-18] Session 24 — v3.3.1 shipped: verdict fix, JIT rule, OS support, version sync, pre-launch audit
+
+### Fixed
+- **`determine_verdict()` false "worsened" verdicts on fix#11 and fix#14** — added cost+turns short-circuit before the `effective_window_pct` ratio check. effective_window_pct is `(total − waste) / total` so when a fix shrinks total_tokens faster than waste, the ratio degrades even as cost and turns crash. Now: if cost_pct ≤ -20% AND turns_pct ≤ -20%, return `improving` regardless of ratio.
+  Why: fix#11 and fix#14 Tidify were showing `worsened` while cost dropped 73–78% and turns dropped 37–49%. The verdict was gaslighting the user.
+  Files: `fix_tracker.py:421-428`
+- **Hardcoded dashboard version in HTML (v2.0.4 / v2.0.3)** — both template headers now use `{{ VERSION }}`. Server's `_serve_template` substitutes it from `_version.py` (which reads `package.json`). Added `"version"` to `/api/health` payload.
+  Why: headers were stuck at v2.0.x even after v3.x ships; gave false impression of unmaintained tool.
+  Files: `templates/dashboard.html:768`, `templates/accounts.html:483`, `server.py:_serve_template`, `server.py:/api/health`
+
+### Added
+- **Insight rule 22: `jit_skill_waste`** — fires when a project's sessions show read_count/tool_call_count > 20% with avg_reads > 20 across ≥ 4 sessions. Proxy for upfront skill/doc loading that burns ~6.9K tokens/session. Fires on Tidify (28%, 21 sess) and WikiLoop (21%, 5 sess).
+  Why: `/context` shows 83 skills loading upfront per CC session; this was the highest-value unbuilt waste pattern. Calibrated to real data (prescribed 40% threshold fired on zero projects; actual max was 31%).
+  Files: `insights.py` (new rule block + CTE that collapses per-session rows before aggregating — `read_count`/`tool_call_count` are denormalized per-turn)
+- **WSL2 path detection** — `scanner.discover_claude_paths()` reads `/proc/version` and enumerates `/mnt/c/Users/*/AppData/Roaming/Claude/projects` when running inside WSL. Windows/macOS/Linux native paths were already covered.
+  Why: Windows users need claudash to find Claude Code data on the Windows side from inside WSL.
+  Files: `scanner.py:741-760`
+- **README rewrite** — Prerequisites table, 4 install methods (npx, npm global, Homebrew, git clone), dedicated Windows/WSL2/macOS/Linux setup sections, Privacy+Backup+Troubleshooting sections, Contributing.
+  Why: old README assumed Claude Code was already running and only covered npm/git clone. Windows users had no path forward.
+  Files: `README.md` (full rewrite, 461→304 lines)
+- **SECURITY.md** — honest posture table, what's done vs not implemented, what data is and isn't stored.
+  Why: public launch needs a visible security story.
+  Files: `SECURITY.md` (new)
+- **Homebrew formula** — `docs/homebrew/claudash.rb` with real sha256 `422c0aec…40e79` from the v3.3.1 tarball.
+  Why: users without Node.js need a brew path.
+  Files: `docs/homebrew/claudash.rb` (new)
+- **Dashboard screenshot** — `docs/screenshots/dashboard.png`.
+  Why: README references it; tweet needs it.
+  Files: `docs/screenshots/dashboard.png` (new)
+
+### Architecture Decisions
+- **Tiny template substitution, not a template engine** — `_serve_template` does a one-line `content.replace("{{ VERSION }}", VERSION)`. No Jinja, no new dependency.
+  Why: only need one variable. A template engine would violate the zero-pip-deps rule.
+  Impact: adding future variables just means adding the replace line; keep it boring.
+- **Verdict primary signal is cost+turns, not effective_window_pct ratio** — any fix that cuts cost ≥ 20% AND turns ≥ 20% simultaneously is unambiguously improving, even if ratio-based efficiency looks worse.
+  Why: ratio-of-ratios metrics lie when the denominator shrinks; cost and turns are direct signals the user can feel.
+  Impact: all future max/pro verdicts will short-circuit on this signal before the ratio check. Effective_window_pct remains a secondary signal.
+- **JIT rule thresholds calibrated to real data, not prescription** — prescribed 40% read_ratio fired on zero projects; used 20% / 20 reads / 4 sessions to catch Tidify and WikiLoop.
+  Why: a rule that never fires is worse than no rule.
+  Impact: if this generates too many false positives as more users ship, re-tune.
+
+### Removed
+- (none — no dead code removed this session)
+
+### Shipped
+- **v3.3.1 to npm** — `@jeganwrites/claudash@3.3.1` published with `--access public`.
+- **v3.3.1 git tag** — pushed to origin.
+- **Pre-launch audit** — 0 critical, 0 high findings. Security/PII/perf/UX all green. Documented in MEMORY.md.
+
+### Known Issues / Not Done
+- **Homebrew tap repo** — `github.com/pnjegan/homebrew-claudash` requires GitHub UI (cannot create via CLI). sha256 is already real in `docs/homebrew/claudash.rb` — just needs copy into `Formula/claudash.rb` in the tap repo.
+- **2 stale `fix_regressing` insights** — generated before the verdict-override landed, still in DB. Should be dismissed from UI before screenshot (done manually by user).
+- **fix#12 WikiLoop** — still `insufficient_data`, needs 7+ post-fix sessions before next measurement.
+- **Accessibility gaps in HTML** — no ARIA/role/alt attributes. Low priority for personal-use tool.
+- **No loading spinners in UI** — polish item, not functionally broken.
+- **API keys plaintext in SQLite** — documented limitation in SECURITY.md; encryption-at-rest not implemented.
+- **`source_path` leaks local FS paths** (`/root/.claude/projects/...`) — stays local, never exposed via API. Acceptable for single-user tool.

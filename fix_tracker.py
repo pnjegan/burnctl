@@ -2,12 +2,12 @@
 
 Workflow:
   1. User records a fix for a project + waste pattern via `POST /api/fixes`
-     or `cli.py fix add`. Claudash snapshots the project's current metrics
+     or `cli.py fix add`. burnctl snapshots the project's current metrics
      into `fixes.baseline_json`.
   2. User applies the fix to their CLAUDE.md / settings.json / prompts /
      architecture and uses Claude Code normally for a week.
   3. User runs `POST /api/fixes/{id}/measure` (or `cli.py measure {id}`).
-     Claudash captures a fresh snapshot, diffs it against the baseline,
+     burnctl captures a fresh snapshot, diffs it against the baseline,
      assigns a plan-aware verdict, and stores the measurement.
   4. The dashboard shows the before/after delta; a share-card endpoint
      produces a plain-text receipt the user can paste anywhere.
@@ -486,7 +486,7 @@ def build_share_card(fix, latest_measurement):
     title = fix["title"] or "(no title)"
     border = "─" * 46
 
-    lines = [border, "Fixed a Claude Code waste pattern with Claudash", ""]
+    lines = [border, "Fixed a Claude Code waste pattern with burnctl", ""]
     lines.append(f"Project: {project}")
     lines.append(f"Issue: {pattern_label}")
     lines.append(f"Fix: {title}")
@@ -495,7 +495,7 @@ def build_share_card(fix, latest_measurement):
     if not latest_measurement:
         lines.append("(No measurements yet — run `cli.py measure` after ≥7 days.)")
         lines.append("")
-        lines.append("Detected by Claudash — github.com/pnjegan/claudash")
+        lines.append("Detected by burnctl — github.com/pnjegan/burnctl")
         lines.append(border)
         return "\n".join(lines)
 
@@ -526,7 +526,7 @@ def build_share_card(fix, latest_measurement):
         lines.append(f"• Monthly savings: ~${monthly:.0f}/mo")
 
     lines.append("")
-    lines.append("Detected by Claudash — github.com/pnjegan/claudash")
+    lines.append("Detected by burnctl — github.com/pnjegan/burnctl")
     lines.append(border)
     return "\n".join(lines)
 

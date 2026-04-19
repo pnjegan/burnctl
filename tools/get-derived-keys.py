@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Claudash — derived-key helper.
+"""burnctl — derived-key helper.
 
 If you can't (or don't want to) call `security find-generic-password`
 from cron on macOS, this script extracts the per-browser AES keys once
@@ -14,8 +14,8 @@ Intended usage:
        from the macOS keychain (you may have to click "Always Allow"
        a couple of times), derive the PBKDF2 keys, and print:
 
-         export CLAUDASH_CHROME_KEY=0123abcd...
-         export CLAUDASH_VIVALDI_KEY=cafebabe...
+         export BURNCTL_CHROME_KEY=0123abcd...
+         export BURNCTL_VIVALDI_KEY=cafebabe...
 
     2. Add those exports to your ~/.zshenv (or the environment block
        of your cron entry).
@@ -71,7 +71,7 @@ def main():
         print("On Linux/Windows, Chromium cookies use a different scheme.", file=sys.stderr)
         sys.exit(1)
 
-    print("Claudash — derived browser key extractor")
+    print("burnctl — derived browser key extractor")
     print("=" * 50)
     print()
     print("Keychain will prompt for each browser the first time —")
@@ -88,7 +88,7 @@ def main():
         if key is None:
             print(f"  {display}: empty password — skipped")
             continue
-        env_name = f"CLAUDASH_{display.upper()}_KEY"
+        env_name = f"BURNCTL_{display.upper()}_KEY"
         exports.append((env_name, key.hex()))
         print(f"  {display}: key derived ({len(key)*8}-bit)")
 
@@ -100,7 +100,7 @@ def main():
     print()
     print("Add these to your shell profile (~/.zshenv or ~/.bash_profile):")
     print()
-    print("# Claudash — pre-derived browser cookie keys (safe to commit to private dotfiles)")
+    print("# burnctl — pre-derived browser cookie keys (safe to commit to private dotfiles)")
     for name, hex_key in exports:
         print(f"export {name}={hex_key}")
     print()

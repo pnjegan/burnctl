@@ -1,6 +1,6 @@
 module.exports = {
   apps: [{
-    name: 'claudash',
+    name: 'burnctl',
     script: 'cli.py',
     interpreter: 'python3',
     args: 'dashboard --skip-init --no-browser',
@@ -10,8 +10,8 @@ module.exports = {
     max_restarts: 10,
     min_uptime: '10s',
     restart_delay: 5000,
-    error_file: '/tmp/claudash-error.log',
-    out_file: '/tmp/claudash-out.log',
+    error_file: '/tmp/burnctl-error.log',
+    out_file: '/tmp/burnctl-out.log',
     log_date_format: 'YYYY-MM-DD HH:mm:ss',
     env: {
       PORT: 8080

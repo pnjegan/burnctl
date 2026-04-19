@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Claudash sync daemon — runs in background,
+burnctl sync daemon — runs in background,
 pushes claude.ai browser data every 5 minutes.
 Works on macOS (uses mac-sync.py) or any OS (uses oauth_sync.py).
 """
@@ -40,7 +40,7 @@ def run_sync():
 
 
 if __name__ == "__main__":
-    print(f"Claudash sync daemon starting (every {INTERVAL//60} min)")
+    print(f"burnctl sync daemon starting (every {INTERVAL//60} min)")
     print(f"Using: {get_sync_script()}")
     print("Press Ctrl+C to stop")
     print()

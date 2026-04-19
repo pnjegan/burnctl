@@ -1,6 +1,6 @@
-# Claudash Hooks Integration
+# burnctl Hooks Integration
 
-Add Claudash to your Claude Code hooks so it automatically
+Add burnctl to your Claude Code hooks so it automatically
 scans after every session.
 
 ## Setup
@@ -16,7 +16,7 @@ Add to `~/.claude/settings.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "bash ~/.claudash/tools/hooks/post-session.sh"
+            "command": "bash ~/.burnctl/tools/hooks/post-session.sh"
           }
         ]
       }
@@ -27,7 +27,7 @@ Add to `~/.claude/settings.json`:
 
 ## What it does
 
-After every tool use, Claudash scans for new sessions.
+After every tool use, burnctl scans for new sessions.
 Your dashboard stays up to date automatically.
 No manual scanning needed.
 
@@ -35,18 +35,18 @@ No manual scanning needed.
 
 Environment variables the hook reads:
 
-- `CLAUDASH_DIR` — path to Claudash install (default: `$HOME/.claudash`)
-- `CLAUDASH_URL` — dashboard URL (default: `http://localhost:8080`)
+- `BURNCTL_DIR` — path to burnctl install (default: `$HOME/.burnctl`)
+- `BURNCTL_URL` — dashboard URL (default: `http://localhost:8080`)
 
 ---
 
-# Claudash hooks — real-time cost meter (v2-F6)
+# burnctl hooks — real-time cost meter (v2-F6)
 
 ## What it does
 
-Shows a **live cost ticker** in the Claudash dashboard while Claude Code
+Shows a **live cost ticker** in the burnctl dashboard while Claude Code
 is running. Detects floundering in real-time (same tool 3× in a row)
-and pushes a red warning into Claudash's MCP warning queue.
+and pushes a red warning into burnctl's MCP warning queue.
 
 ## Install
 
@@ -61,7 +61,7 @@ Add to `~/.claude/settings.json` (merge with any existing `hooks` block):
         "hooks": [
           {
             "type": "command",
-            "command": "bash /root/projects/jk-usage-dashboard/hooks/pre_tool_use.sh"
+            "command": "bash /root/projects/burnctl/hooks/pre_tool_use.sh"
           }
         ]
       }
@@ -72,7 +72,7 @@ Add to `~/.claude/settings.json` (merge with any existing `hooks` block):
         "hooks": [
           {
             "type": "command",
-            "command": "bash /root/projects/jk-usage-dashboard/hooks/post_tool_use.sh"
+            "command": "bash /root/projects/burnctl/hooks/post_tool_use.sh"
           }
         ]
       }
@@ -81,12 +81,12 @@ Add to `~/.claude/settings.json` (merge with any existing `hooks` block):
 }
 ```
 
-If installed via `npx claudash`, use `~/.claudash/hooks/pre_tool_use.sh`
-and `~/.claudash/hooks/post_tool_use.sh`.
+If installed via `npx burnctl`, use `~/.burnctl/hooks/pre_tool_use.sh`
+and `~/.burnctl/hooks/post_tool_use.sh`.
 
 ## Cost of the hooks
 
-Zero. Fire-and-forget `curl` — adds <1 ms per tool call. If Claudash
+Zero. Fire-and-forget `curl` — adds <1 ms per tool call. If burnctl
 is not running, the hooks silently no-op (`|| true`).
 
 ## Security

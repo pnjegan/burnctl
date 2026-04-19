@@ -2,7 +2,7 @@
 
 ## Current security posture (personal use)
 
-Claudash is designed for single-user personal deployment.
+burnctl is designed for single-user personal deployment.
 
 | Control | Status | Notes |
 |---|---|---|
@@ -32,7 +32,7 @@ Claudash is designed for single-user personal deployment.
 Open a GitHub issue with label `security`.
 For sensitive reports, email the repository owner directly via GitHub.
 
-## What data Claudash stores
+## What data burnctl stores
 
 - Session token counts (not conversation content)
 - Tool call types and counts per session
@@ -41,7 +41,7 @@ For sensitive reports, email the repository owner directly via GitHub.
 - API key for fix generation (only if configured)
 - claude.ai session cookie (only if browser tracking enabled)
 
-## What Claudash does NOT store
+## What burnctl does NOT store
 
 - Conversation content or message text
 - File contents from your projects

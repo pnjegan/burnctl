@@ -17,7 +17,7 @@ Setup:
      used to be injected server-side, which leaked the token to any caller).
   2. Retrieve your sync token on the server:
        ssh user@YOUR_VPS_IP
-       cd ~/claudash
+       cd ~/burnctl
        python3 cli.py claude-ai --sync-token
   3. Paste the token into SYNC_TOKEN below.
   4. Run: python3 mac-sync.py
@@ -36,7 +36,7 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
 # ── Configuration ──
-# Set VPS_IP to your Claudash server's IP, or "localhost" if you're running
+# Set VPS_IP to your burnctl server's IP, or "localhost" if you're running
 # via SSH tunnel (ssh -L 8080:localhost:8080 user@your-server).
 VPS_IP = "localhost"
 VPS_PORT = 8080
@@ -380,7 +380,7 @@ if __name__ == "__main__":
 #
 # To get your token:
 #   ssh user@YOUR_VPS_IP
-#   cd ~/claudash
+#   cd ~/burnctl
 #   python3 cli.py claude-ai --sync-token
 #
 # Then paste the value into SYNC_TOKEN at the top of this file.

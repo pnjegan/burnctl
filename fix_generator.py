@@ -1,7 +1,7 @@
-"""Claudash v2-F4 — agentic fix generator (Anthropic models only).
+"""burnctl v2-F4 — agentic fix generator (Anthropic models only).
 
 Given a waste_event row, produces a targeted CLAUDE.md rule using a
-pattern-specific prompt template. Claudash uses Claude to fix Claude
+pattern-specific prompt template. burnctl uses Claude to fix Claude
 Code waste — all three transports below run Anthropic models.
 
 Live production config (as shipped, DB settings default):
@@ -79,7 +79,7 @@ SYSTEM_PROMPT = (
     "improvements for Claude Code users.\n"
     "Your job is to write a single targeted CLAUDE.md rule that will "
     "reduce a specific observed waste pattern. You will receive "
-    "telemetry from Claudash (a dashboard that scans Claude Code JSONL "
+    "telemetry from burnctl (a dashboard that scans Claude Code JSONL "
     "transcripts) and the project's current CLAUDE.md content.\n"
     "Respond ONLY with valid JSON matching the schema provided.\n"
     "Do not explain outside the JSON. Rules must be concrete and "
@@ -217,9 +217,9 @@ def _err(msg, **extra):
 
 # DB project name → actual filesystem dir under ~/projects/. Used when the
 # DB-normalized name has no fuzzy path to the real source tree (e.g.
-# "Claudash" lives in jk-usage-dashboard/, an unrelated identifier).
+# "burnctl" lives in burnctl/, an unrelated identifier).
 _PROJECT_ALIASES = {
-    "claudash": "jk-usage-dashboard",
+    "burnctl": "burnctl",
 }
 
 # Directory-name substrings that disqualify a candidate during fuzzy search.
@@ -257,7 +257,7 @@ def find_claude_md(project, conn=None):
     DB project names ('Brainworks', 'Tidify', 'WikiLoop', 'CareerOps', ...)
     rarely match the on-disk dir verbatim — projects get versioned
     (Tidify15), live under non-projects roots (~/wikiloop), use kebab-case
-    (career-ops), or get renamed entirely (Claudash → jk-usage-dashboard).
+    (career-ops), or get renamed entirely (burnctl → burnctl).
 
     Search order (first hit wins):
       0. _PROJECT_ALIASES override (~/projects/<aliased>/...)
@@ -517,7 +517,7 @@ def _extract_anthropic_text(resp_dict):
 def _call_anthropic(prompt, model, api_key):
     """Direct Anthropic Messages API. Returns raw assistant text."""
     if not api_key:
-        raise ValueError("Anthropic API key not set — run: claudash keys --set-provider")
+        raise ValueError("Anthropic API key not set — run: burnctl keys --set-provider")
     payload = {
         "model": model,
         "max_tokens": MAX_TOKENS,
@@ -540,7 +540,7 @@ def _call_anthropic(prompt, model, api_key):
             raw = resp.read().decode("utf-8", errors="replace")
     except HTTPError as e:
         if e.code == 401:
-            raise ValueError("Invalid Anthropic API key — run: claudash keys --set-provider")
+            raise ValueError("Invalid Anthropic API key — run: burnctl keys --set-provider")
         if e.code == 429:
             raise ValueError("Anthropic rate limited — try again in 60 seconds")
         if 500 <= e.code < 600:
@@ -603,7 +603,7 @@ def _call_openrouter(prompt, model, api_key):
     """OpenRouter Chat Completions API, restricted to Anthropic models.
     The URL is fixed (https://openrouter.ai/api/v1/chat/completions)."""
     if not api_key:
-        raise ValueError("OpenRouter API key not set — run: claudash keys --set-provider")
+        raise ValueError("OpenRouter API key not set — run: burnctl keys --set-provider")
 
     payload = {
         "model": model or DEFAULT_OPENROUTER_MODEL,
@@ -623,7 +623,7 @@ def _call_openrouter(prompt, model, api_key):
             raw = resp.read().decode("utf-8", errors="replace")
     except HTTPError as e:
         if e.code == 401:
-            raise ValueError("Invalid OpenRouter API key — run: claudash keys --set-provider")
+            raise ValueError("Invalid OpenRouter API key — run: burnctl keys --set-provider")
         if e.code == 429:
             raise ValueError("OpenRouter rate limited — try again in 60 seconds")
         if 500 <= e.code < 600:
@@ -670,7 +670,7 @@ def _call_provider(prompt, conn):
                  or DEFAULT_OPENROUTER_MODEL).strip()
         return _call_openrouter(prompt, model, key), model
     raise ValueError(
-        f"Unknown fix_provider '{provider}' — run: claudash keys --set-provider"
+        f"Unknown fix_provider '{provider}' — run: burnctl keys --set-provider"
     )
 
 
@@ -801,7 +801,7 @@ def insert_generated_fix(conn, waste_event_id, gen):
             " baseline_json, status, generated_by, generation_prompt, "
             " generation_response, waste_event_id, applied_to_path) "
             "VALUES (?, ?, ?, ?, 'claude_md_rule', ?, '{}', 'proposed', "
-            "        'claudash', ?, ?, ?, ?)",
+            "        'burnctl', ?, ?, ?, ?)",
             (
                 int(time.time()),
                 gen["project"],

@@ -1,8 +1,10 @@
-# Claudash
+# burnctl
 
-**Claude Code usage intelligence dashboard.**
-Reads your local session files, detects waste patterns, generates fixes,
-and measures whether they worked.
+**Real-time burn-rate monitor for Claude Code.**
+Tokens/min, $/hr, retry-loop detection, waste-pattern analysis — local-only,
+zero pip dependencies.
+
+> Renamed and rebooted from `claudash` 3.x. Same engine; sharper focus.
 
 ![Dashboard screenshot](docs/screenshots/dashboard.png)
 
@@ -10,252 +12,188 @@ and measures whether they worked.
 
 ## What it does
 
-Most Claude Code usage tools tell you how many tokens you spent.
-Claudash tells you *why* and *what to do about it*.
+```bash
+burnctl statusline
+# ⚡ 142t/min | $0.84/hr | 5hr: 12.3k tok / $0.41 | Loop: ✓
+```
 
-It detects four waste patterns in your sessions — repeated file reads,
-stuck retry loops, sessions that ran too long without compacting,
-and cost outliers — then generates targeted CLAUDE.md rules to fix them
-and measures the before/after difference.
+Reads the JSONL files Claude Code writes locally to `~/.claude/projects/`,
+parses sessions into a SQLite DB, and surfaces:
+
+- **Live burn rate** — tokens/min and $/min observed in the last 5 minutes
+- **5-hour rolling block** — observed token + cost totals (no quota guess; see note below)
+- **Retry-loop detection** — flags any project firing 5+ sessions in 10 min with avg gap < 60s
+- **Waste-pattern analysis** — repeated reads, stuck loops, late compactions, cost outliers (22 detectors)
+- **Fix tracker** — capture a baseline, apply a CLAUDE.md rule, re-measure outcomes
+- **Web dashboard** — http://localhost:8080 with charts + per-project breakdown
+
+### A note on rate-limit math
+
+Anthropic does **not** publish per-plan token-budget limits for the 5-hour
+block. burnctl deliberately does not invent an "X% of limit used" number,
+because making one up would mislead you. We show observed local burn and
+let you apply your own intuition.
 
 ---
 
-## Prerequisites
+## vs ccusage
 
-Before installing Claudash, you need:
+|                              | ccusage | burnctl |
+|------------------------------|:-------:|:-------:|
+| Token + cost reports         |   ✅    |   ✅    |
+| 5-hour block totals (observed) |   ✅    |   ✅    |
+| Live tokens/min + $/hr       |   ❌    |   ✅    |
+| Retry-loop detection         |   ❌    |   ✅    |
+| Web dashboard                |   ❌    |   ✅    |
+| Waste-pattern detection (22 rules) |   ❌    |   ✅    |
+| Fix tracker (before/after)   |   ❌    |   ✅    |
+| Statusline hook output       |   ❌    |   ✅    |
+| Inferred ETA to limit        |   —    |   —    |
 
-| Requirement | Why | How to check |
-|---|---|---|
-| Claude Code | Claudash reads its session files | `claude --version` |
-| Python 3.8+ | Claudash is written in Python | `python3 --version` |
-| Node.js 16+ | Required for npx install method only | `node --version` |
-
-**Claude Code must have run at least one session** before Claudash
-will show any data. Sessions are stored in:
-- **macOS / Linux**: `~/.claude/projects/`
-- **Windows**: `%APPDATA%\Claude\projects\`
-- **WSL2**: `/mnt/c/Users/<username>/AppData/Roaming/Claude/projects/`
+(Neither tool can show a real ETA-to-limit because Anthropic does not publish the limit. ccusage estimates it; we don't.)
 
 ---
 
 ## Install
 
-Choose the method that works for your setup:
-
-### Method 1 — npx (fastest, no install needed)
+### npx (no install)
 ```bash
-npx @jeganwrites/claudash
+npx burnctl@latest
 ```
-Requires Node.js 16+. Downloads and runs without permanent installation.
 
-### Method 2 — npm global install
+### npm global
 ```bash
-npm install -g @jeganwrites/claudash
-claudash dashboard
+npm install -g burnctl
+burnctl dashboard
 ```
-Installs permanently. Run `claudash` from anywhere.
 
-### Method 3 — Homebrew (macOS / Linux)
+### Homebrew (macOS / Linux)
 ```bash
-brew tap pnjegan/claudash
-brew install claudash
-claudash dashboard
+brew tap pnjegan/burnctl
+brew install burnctl
+burnctl dashboard
 ```
-No Node.js required. Python only.
 
-### Method 4 — Git clone (full control)
+### Git clone
 ```bash
-git clone https://github.com/pnjegan/claudash.git
-cd claudash
+git clone https://github.com/pnjegan/burnctl.git
+cd burnctl
 python3 cli.py dashboard
 ```
-No npm, no Node.js required. Best for development or customisation.
 
 ---
 
-## Windows users
+## Requirements
 
-Claudash runs on Windows via **WSL2** (Windows Subsystem for Linux).
-Native Windows support is in progress.
+| Requirement | Why | Check |
+|---|---|---|
+| Claude Code | burnctl reads its session files | `claude --version` |
+| Python 3.8+ | Engine is Python (no pip deps) | `python3 --version` |
+| Node.js 16+ | Required only for npx / npm install | `node --version` |
 
-**Setup WSL2:**
-```bash
-# In PowerShell (as administrator)
-wsl --install
-
-# Restart, then open Ubuntu from Start menu
-# Install Node.js inside WSL
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt-get install -y nodejs
-
-# Install Claudash
-npx @jeganwrites/claudash
-```
-
-Claudash will automatically detect your Windows Claude Code sessions
-at `/mnt/c/Users/<username>/AppData/Roaming/Claude/projects/`.
+Run at least one Claude Code session before launching burnctl — sessions are
+stored in:
+- macOS / Linux: `~/.claude/projects/`
+- Windows (WSL2): `/mnt/c/Users/<username>/AppData/Roaming/Claude/projects/`
 
 ---
 
-## macOS users
+## Common commands
 
-**Quickest path:**
 ```bash
-# Install Node.js if you don't have it
-brew install node
-
-# Run Claudash
-npx @jeganwrites/claudash
+burnctl dashboard       # web UI on http://localhost:8080
+burnctl burnrate        # tokens/min, $/min, $/hr (last 5 min)
+burnctl loops           # show retry-loop activity in last 10 min
+burnctl block           # 5-hour rolling block totals
+burnctl statusline      # one-line output for Claude Code statusline hook
+burnctl scan            # one-shot scan of new JSONL sessions
+burnctl waste           # waste-pattern detector summary
+burnctl fixes           # list recorded fixes + verdict
+burnctl backup          # hot-copy DB + JSON fixes export
 ```
 
-Or use Homebrew install (no Node.js needed):
-```bash
-brew tap pnjegan/claudash
-brew install claudash
-claudash dashboard
-```
+Full command list: `burnctl --help`.
 
 ---
 
-## Linux users
+## Statusline hook
 
-```bash
-# Ubuntu / Debian — install Node.js
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt-get install -y nodejs
+Add to `~/.claude/settings.json` (or per-project `.claude/settings.json`):
 
-# Run
-npx @jeganwrites/claudash
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "burnctl statusline"
+  }
+}
 ```
+
+Then your Claude Code statusline shows live burn whenever you're working.
 
 ---
 
-## First run
+## Privacy
 
-```bash
-# 1. Start the dashboard (auto-opens browser)
-claudash dashboard
+- **Nothing leaves your machine.** No telemetry, no analytics, no cloud sync.
+- DB lives at `data/usage.db` (mode 0600 on Unix).
+- burnctl reads session JSONL for token counts and tool-call metadata only —
+  it does not store conversation content.
+- API keys you paste for fix-generation are stored locally in the same SQLite DB.
 
-# 2. If no data appears, run the scanner manually
-claudash scan
-
-# 3. Check what's in your session files
-claudash stats
-```
-
-Dashboard opens at **http://localhost:8080**
-
-If the port is in use:
-```bash
-PORT=9090 claudash dashboard
-```
-
----
-
-## What you'll see
-
-After your first scan:
-
-- **Summary bar** — total sessions, total cost, cache hit rate
-- **Project breakdown** — which projects cost the most
-- **Efficiency score** — 0-100 grade across 5 dimensions
-- **Active insights** — specific problems with fix suggestions
-- **Waste events** — detected patterns with token cost
-- **Fix tracker** — before/after measurement for applied fixes
-
-A score below 50 is not unusual. The score measures how efficiently
-you're using your context window, not whether the work was good.
-
----
-
-## Backup and recovery
-
-```bash
-# Manual backup (creates snapshot + JSON export)
-claudash backup
-
-# Restore from backup
-claudash restore --file ~/.claudash/backups/claudash-20260418.db
-
-# Automated hourly backup (add to crontab)
-0 * * * * cd /path/to/claudash && python3 cli.py backup --quiet
-```
-
-Your irreplaceable data is in the `fixes` and `fix_measurements` tables.
-Everything else regenerates from your session files.
-
----
-
-## Privacy and data handling
-
-Claudash reads your Claude Code session files stored locally on your machine.
-
-- **Nothing is uploaded** — all data stays in `data/usage.db` on your machine
-- **No telemetry** — no usage tracking, no analytics, no external calls
-- **No accounts** — no login, no email, no cloud sync
-- **Session files contain your full conversation history** — Claudash reads them to extract token counts and tool calls only, not conversation content
-
-The database is created with restricted file permissions (0600 on Unix systems).
-API keys for fix generation are stored locally in the same database.
-
-For team or cloud deployment, see [SECURITY.md](SECURITY.md).
+For team / cloud deployment guidance: [SECURITY.md](SECURITY.md).
 
 ---
 
 ## Troubleshooting
 
 **Dashboard shows no data**
-- Run `claudash scan` first
-- Check that `~/.claude/projects/` contains `.jsonl` files
-- On Windows, run inside WSL2
+Run `burnctl scan`. Confirm `~/.claude/projects/` contains `.jsonl` files.
 
 **Port 8080 already in use**
 ```bash
-PORT=9090 claudash dashboard
+burnctl dashboard --port 9090
 ```
 
 **Python not found**
 ```bash
-# macOS
-brew install python@3.11
-
-# Ubuntu
-sudo apt install python3
-```
-
-**Node.js version too old**
-Claudash requires Node.js 16+. Check with `node --version`.
-Update via `brew upgrade node` (macOS) or via nvm.
-
-**Permission denied on database**
-```bash
-chmod 600 data/usage.db
+brew install python@3.11           # macOS
+sudo apt install python3            # Ubuntu / Debian
 ```
 
 **WSL2 can't find Windows sessions**
-Claudash looks for sessions in `/mnt/c/Users/<username>/AppData/Roaming/Claude/projects/`.
-Confirm that path exists: `ls /mnt/c/Users/` and find your username.
+burnctl looks at `/mnt/c/Users/<username>/AppData/Roaming/Claude/projects/`.
+Confirm the path with `ls /mnt/c/Users/`.
+
+**Upgrading from `@jeganwrites/claudash` 3.x**
+- Existing DB at `data/usage.db` keeps working unchanged
+- Env vars: `BURNCTL_VPS_IP`, `BURNCTL_VPS_PORT`, `BURNCTL_BACKUP_DIR`
+  (legacy `CLAUDASH_*` variants still honored)
+- `/tmp/claudash.pid` → `/tmp/burnctl.pid` — kill the old daemon if it's still running
+- MCP server key in `~/.claude/settings.json` renames from `"claudash"` to `"burnctl"`
+- Backup default path stays `/root/backups/claudash` so existing rclone offsite
+  sync keeps working through the rebrand
 
 ---
 
 ## Contributing
 
-Pull requests welcome. Especially:
-- Windows native support (without WSL2)
-- Firefox session key support for browser tracking
-- Additional waste pattern detectors
+PRs welcome. Especially:
+- Native Windows support (without WSL2)
+- More waste-pattern detectors
+- Statusline output formats for other shells / editors
 
 ```bash
-git clone https://github.com/pnjegan/claudash.git
-cd claudash
-python3 cli.py dashboard  # no install needed
+git clone https://github.com/pnjegan/burnctl.git
+cd burnctl
+python3 cli.py dashboard   # no install needed
 ```
 
 ---
 
 ## License
 
-MIT — use it, fork it, build on it.
+MIT — fork it, ship it, build on it.
 
 ---
 

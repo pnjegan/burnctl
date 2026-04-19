@@ -1,4 +1,4 @@
-# Claudash has zero pip dependencies.
+# burnctl has zero pip dependencies.
 # All modules used are Python standard library.
 # Python 3.8+ required.
 #

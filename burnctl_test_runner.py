@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Claudash Automated Test Runner
-Run from VPS: python3 claudash_test_runner.py
-Run specific section: python3 claudash_test_runner.py --section v2
-Run single test: python3 claudash_test_runner.py --test TEST-V2-F1
+burnctl Automated Test Runner
+Run from VPS: python3 burnctl_test_runner.py
+Run specific section: python3 burnctl_test_runner.py --section v2
+Run single test: python3 burnctl_test_runner.py --test TEST-V2-F1
 
-Results saved to: /tmp/claudash_test_results.txt
+Results saved to: /tmp/burnctl_test_results.txt
 """
 
 import subprocess
@@ -22,9 +22,9 @@ from datetime import datetime
 # ── CONFIG ────────────────────────────────────────────────────────────────────
 
 BASE_URL = "http://localhost:8080"
-DB_PATH = os.path.expanduser("~/projects/jk-usage-dashboard/data/usage.db")
-PROJ_DIR = os.path.expanduser("~/projects/jk-usage-dashboard")
-RESULTS_FILE = "/tmp/claudash_test_results.txt"
+DB_PATH = os.path.expanduser("~/projects/burnctl/data/usage.db")
+PROJ_DIR = os.path.expanduser("~/projects/burnctl")
+RESULTS_FILE = "/tmp/burnctl_test_results.txt"
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────
 
@@ -118,16 +118,16 @@ def test_i01_server_health():
 
 def test_i02_pm2():
     """v3.1 — PM2 supervision was deprecated in favor of the PID lock in
-    cmd_dashboard() (fcntl.flock on /tmp/claudash.pid). PM2 is no longer
+    cmd_dashboard() (fcntl.flock on /tmp/burnctl.pid). PM2 is no longer
     required. This test passes when either the PID lock is active OR PM2
     manages the process; it fails only when neither supervisor is in place.
     """
-    pid_lock_ok = os.path.exists("/tmp/claudash.pid")
+    pid_lock_ok = os.path.exists("/tmp/burnctl.pid")
     try:
         result = subprocess.run(
             ["pm2", "list"], capture_output=True, text=True, timeout=10
         )
-        pm2_ok = "claudash" in result.stdout and "online" in result.stdout
+        pm2_ok = "burnctl" in result.stdout and "online" in result.stdout
     except Exception:
         pm2_ok = False
 
@@ -136,7 +136,7 @@ def test_i02_pm2():
                "PID lock active (PM2 deprecated in v3.1)")
     elif pm2_ok:
         record("TEST-I-02", "Process supervision", "PASS",
-               "claudash online in PM2")
+               "burnctl online in PM2")
     else:
         record("TEST-I-02", "Process supervision", "FAIL",
                "neither PID lock nor PM2 supervision active")
@@ -292,7 +292,7 @@ def test_v1_07_dashboard_ui():
         req = urllib.request.Request(f"{BASE_URL}/")
         with urllib.request.urlopen(req, timeout=10) as r:
             body = r.read().decode("utf-8", errors="ignore")
-            has_content = "claudash" in body.lower() or "dashboard" in body.lower()
+            has_content = "burnctl" in body.lower() or "dashboard" in body.lower()
             record("TEST-V1-07", "Dashboard UI loads",
                    "PASS" if has_content else "WARN",
                    f"HTTP {r.status}, dashboard content: {has_content}")
@@ -412,7 +412,7 @@ def test_v2_f4_fix_generator():
                f"Wrong patterns: {patterns}")
     elif not offline_ok:
         record("TEST-V2-F4", "Fix generator", "SKIP",
-               "No provider configured — run: claudash keys --set-provider")
+               "No provider configured — run: burnctl keys --set-provider")
     else:
         record("TEST-V2-F4", "Fix generator", "PASS", detail)
 
@@ -420,7 +420,7 @@ def test_v2_f4b_non_anthropic_rejected():
     """v2.0.1 policy: only anthropic / bedrock / openrouter are supported.
     Any other fix_provider value must be rejected by _call_provider with a
     ValueError, and generate_fix must surface that as a graceful error dict
-    (never raise). Gap #22 from CLAUDASH_AUDIT."""
+    (never raise). Gap #22 from BURNCTL_AUDIT."""
     import os
     import sqlite3 as _sqlite3
     import tempfile
@@ -433,7 +433,7 @@ def test_v2_f4b_non_anthropic_rejected():
 
     # Scratch DB so we don't mutate live state. Seed the settings row with a
     # provider name that is NOT in SUPPORTED_PROVIDERS.
-    tmp_path = tempfile.mktemp(suffix="_claudash_test.db")
+    tmp_path = tempfile.mktemp(suffix="_burnctl_test.db")
     try:
         conn = _sqlite3.connect(tmp_path)
         conn.row_factory = _sqlite3.Row
@@ -479,12 +479,12 @@ def test_v2_f5_mcp_bidirectional():
         import mcp_server
 
         # test trigger_scan
-        result = mcp_server.handle_tool("claudash_trigger_scan", {})
+        result = mcp_server.handle_tool("burnctl_trigger_scan", {})
         scan_ok = result.get("status") == "ok"
 
         # test report_waste
         import time
-        result2 = mcp_server.handle_tool("claudash_report_waste", {
+        result2 = mcp_server.handle_tool("burnctl_report_waste", {
             "project": "Tidify",
             "pattern_type": "repeated_reads",
             "session_id": f"test-runner-{int(time.time())}",
@@ -493,7 +493,7 @@ def test_v2_f5_mcp_bidirectional():
         report_ok = result2.get("status") == "ok" and "waste_event_id" in result2
 
         # test get_warnings shape
-        result3 = mcp_server.handle_tool("claudash_get_warnings", {"project": "Tidify"})
+        result3 = mcp_server.handle_tool("burnctl_get_warnings", {"project": "Tidify"})
         warnings_ok = all(k in result3 for k in ["warnings", "count", "has_critical"])
 
         detail = f"trigger_scan: {scan_ok}\nreport_waste: {report_ok}\nget_warnings shape: {warnings_ok}"
@@ -915,7 +915,7 @@ ALL_TESTS = {
 # ── MAIN ───────────────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="Claudash test runner")
+    parser = argparse.ArgumentParser(description="burnctl test runner")
     parser.add_argument("--section", choices=["infra","v1","v2","v3.1","v3.2","regression","all"],
                         default="all")
     parser.add_argument("--test", help="Run single test by ID (e.g. TEST-V2-F1)")
@@ -924,7 +924,7 @@ def main():
     args = parser.parse_args()
 
     print(f"\n{'='*60}")
-    print(f"  Claudash Test Runner")
+    print(f"  burnctl Test Runner")
     print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"  DB: {DB_PATH}")
     print(f"  Server: {BASE_URL}")
@@ -976,7 +976,7 @@ def main():
 
     # write results file
     with open(RESULTS_FILE, "w") as f:
-        f.write(f"Claudash Test Results — {datetime.now().isoformat()}\n")
+        f.write(f"burnctl Test Results — {datetime.now().isoformat()}\n")
         f.write(f"PASS: {passed}  FAIL: {failed}  WARN: {warned}\n\n")
         for r in results:
             f.write(f"[{r['status']}] {r['id']}: {r['name']}\n")

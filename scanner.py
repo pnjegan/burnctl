@@ -818,7 +818,7 @@ def discover_claude_paths():
 #
 # After each scan + waste-detection pass, push actionable warnings into
 # mcp_warnings. Dedup per (project, warning_type) on a 6-hour window so
-# Claude Code sessions that call claudash_get_warnings don't see the
+# Claude Code sessions that call burnctl_get_warnings don't see the
 # same alert over and over.
 
 _MCP_WARNING_DEDUP_HOURS = 6
@@ -909,7 +909,7 @@ def generate_mcp_warnings(conn):
                 (proj, seven_days),
             ).fetchone()
             top_id = top[0] if top else None
-            tail = (f" — consider running: claudash fix generate {top_id}"
+            tail = (f" — consider running: burnctl fix generate {top_id}"
                     if top_id is not None else "")
             msg = f"{proj} repeated_reads up {pct:.0f}% this week{tail}"
             insert_mcp_warning(conn, proj, None, "repeated_reads_spike", msg, "amber")
@@ -1052,7 +1052,7 @@ def start_periodic_scan(interval_seconds=300):
                 scan_all()
                 generate_insights()
                 # v2-F5: refresh waste detection, then emit MCP warnings so
-                # claudash_get_warnings sees current state on each 5-min cycle.
+                # burnctl_get_warnings sees current state on each 5-min cycle.
                 try:
                     from waste_patterns import detect_all as _detect_all
                     conn = get_conn()

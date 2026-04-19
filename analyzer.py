@@ -1478,3 +1478,282 @@ def full_analysis(conn, account="all"):
         "efficiency": efficiency,
         "generated_at": _now(),
     }
+
+
+# ============================================================
+# BURNCTL WASTE INTELLIGENCE — additive, does not touch existing exports
+# ============================================================
+
+def iter_jsonl_sessions(project_filter=None):
+    """Yield parsed JSONL sessions from ~/.claude/projects/"""
+    import json
+    from pathlib import Path
+
+    CLAUDE_DIRS = [
+        Path.home() / ".claude" / "projects",
+        Path.home() / ".config" / "claude" / "projects",
+    ]
+    for base in CLAUDE_DIRS:
+        if not base.exists():
+            continue
+        for jsonl_file in sorted(base.rglob("*.jsonl")):
+            project = jsonl_file.parent.name
+            if project_filter and project_filter.lower() not in project.lower():
+                continue
+            lines = []
+            try:
+                with open(jsonl_file) as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            lines.append(json.loads(line))
+            except Exception:
+                continue
+            if lines:
+                yield {
+                    "file": str(jsonl_file),
+                    "project": project,
+                    "session_id": jsonl_file.stem,
+                    "lines": lines
+                }
+
+
+def classify_waste_session(session):
+    """
+    Classify one JSONL session into nine waste bins.
+    Returns dict with bin counts and token estimates.
+    All detection is heuristic — zero LLM calls.
+    """
+    from collections import defaultdict
+
+    lines = session["lines"]
+    bins = defaultdict(lambda: {"count": 0, "tokens": 0})
+
+    tool_uses = {}
+    tool_results = {}
+    file_reads = defaultdict(list)
+    compaction_count = 0
+    consecutive_failures = 0
+    max_consecutive_failures = 0
+    total_input_tokens = 0
+
+    for turn_idx, line in enumerate(lines):
+        msg_type = line.get("type", "")
+        msg = line.get("message", {})
+        usage = msg.get("usage", {})
+
+        inp = usage.get("input_tokens", 0) or 0
+        out = usage.get("output_tokens", 0) or 0
+        total_input_tokens += inp
+
+        if msg_type == "system":
+            if line.get("event", "") == "compaction":
+                compaction_count += 1
+
+        if msg_type == "assistant":
+            content = msg.get("content", [])
+            if not isinstance(content, list):
+                continue
+            for block in content:
+                if block.get("type") == "tool_use":
+                    tid = block.get("id")
+                    tname = block.get("name", "")
+                    tinput = block.get("input", {})
+                    tool_uses[tid] = {
+                        "name": tname,
+                        "input": tinput,
+                        "turn_idx": turn_idx,
+                        "tokens": out
+                    }
+                    if tname in ("Read", "read_file") and "path" in tinput:
+                        file_reads[tinput["path"]].append(turn_idx)
+
+        if msg_type == "user":
+            content = msg.get("content", [])
+            if not isinstance(content, list):
+                continue
+            for block in content:
+                if block.get("type") == "tool_result":
+                    use_id = block.get("tool_use_id")
+                    is_error = block.get("is_error", False)
+                    rc = block.get("content", "")
+                    result_text = (
+                        " ".join(b.get("text","") for b in rc if isinstance(b,dict))
+                        if isinstance(rc, list) else str(rc)
+                    )
+                    tool_results[use_id] = {
+                        "is_error": is_error,
+                        "content_len": len(result_text),
+                        "text_preview": result_text[:300]
+                    }
+
+                    if is_error:
+                        consecutive_failures += 1
+                        max_consecutive_failures = max(max_consecutive_failures, consecutive_failures)
+                    else:
+                        consecutive_failures = 0
+
+                    # Bin: browser_wall
+                    if use_id in tool_uses:
+                        tname = tool_uses[use_id]["name"]
+                        if tname in ("WebFetch", "web_fetch", "browser_navigate"):
+                            if any(s in result_text for s in
+                                   ["Cloudflare","cf-ray","CAPTCHA","403 Forbidden","Access Denied"]):
+                                bins["browser_wall"]["count"] += 1
+                                bins["browser_wall"]["tokens"] += tool_uses[use_id]["tokens"]
+
+                    # Bin: oververbose_tool
+                    if len(result_text) > 50000:
+                        bins["oververbose_tool"]["count"] += 1
+                        bins["oververbose_tool"]["tokens"] += inp
+
+    # Bin: retry_error
+    for tid, info in tool_uses.items():
+        if tid in tool_results and tool_results[tid]["is_error"]:
+            tname = info["name"]
+            turn = info["turn_idx"]
+            later = [t for t,i in tool_uses.items()
+                     if i["name"]==tname and turn < i["turn_idx"] <= turn+3]
+            if later:
+                bins["retry_error"]["count"] += 1
+                bins["retry_error"]["tokens"] += info["tokens"]
+
+    # Bin: file_reread
+    for filepath, turns in file_reads.items():
+        if len(turns) > 1:
+            reread_count = len(turns) - 1
+            bins["file_reread"]["count"] += reread_count
+            bins["file_reread"]["tokens"] += reread_count * 2000
+
+    # Bin: compaction_thrash
+    if compaction_count >= 3:
+        bins["compaction_thrash"]["count"] += compaction_count
+        bins["compaction_thrash"]["tokens"] += int(total_input_tokens * 0.1)
+
+    # Bin: dead_end
+    if max_consecutive_failures > 3:
+        bins["dead_end"]["count"] += max_consecutive_failures
+        bins["dead_end"]["tokens"] += max_consecutive_failures * 1000
+
+    return {
+        "session_id": session["session_id"],
+        "project": session["project"],
+        "total_input_tokens": total_input_tokens,
+        "bins": dict(bins),
+        "compaction_count": compaction_count,
+        "max_consecutive_failures": max_consecutive_failures,
+    }
+
+
+WASTE_PRESCRIPTIONS = {
+    "file_reread": {
+        "title": "Duplicate file reads",
+        "severity": "HIGH",
+        "claude_md_fix": (
+            "## File Read Rules\n"
+            "- Never re-read a file already read this session\n"
+            "- Use grep/search to find specific content instead of full re-reads\n"
+            "- Store file contents in working memory across tool calls"
+        ),
+        "why": "Each re-read wastes tokens on content already in context",
+    },
+    "retry_error": {
+        "title": "Tool retry loops",
+        "severity": "HIGH",
+        "claude_md_fix": (
+            "## Error Handling Rules\n"
+            "- Never retry a failing tool call more than twice with identical input\n"
+            "- On first failure: diagnose before retrying\n"
+            "- On second failure: stop and report to user"
+        ),
+        "why": "Anthropic data: 250K wasted API calls/day globally from retry loops",
+    },
+    "compaction_thrash": {
+        "title": "Compaction thrashing",
+        "severity": "CRITICAL",
+        "claude_md_fix": (
+            "## Session Management Rules\n"
+            "- Break large tasks into smaller sessions before hitting context limit\n"
+            "- Use /compact proactively at task boundaries\n"
+            "- If compaction fires 3+ times: start a new session\n\n"
+            "## Compact Instructions\n"
+            "Preserve: task state, modified file paths, decisions, errors encountered\n"
+            "Discard: full file contents already incorporated, verbose tool outputs"
+        ),
+        "why": "Anthropic internal fix: MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES=3",
+    },
+    "dead_end": {
+        "title": "Dead-end failure loops",
+        "severity": "CRITICAL",
+        "claude_md_fix": (
+            "## Dead-End Prevention\n"
+            "- After 3 consecutive tool failures: stop and report, do not continue\n"
+            "- Never attempt more than 3 approaches without user input\n"
+            "- When stuck: describe what failed and ask for guidance"
+        ),
+        "why": "Sessions with 50+ consecutive failures waste the entire quota window",
+    },
+    "browser_wall": {
+        "title": "Browser/Cloudflare blocks",
+        "severity": "MEDIUM",
+        "claude_md_fix": (
+            "## Web Fetch Rules\n"
+            "- Do not retry a URL that returned 403 or Cloudflare block\n"
+            "- For blocked sites: use APIs or alternative sources\n"
+            "- Stop and report on first block, do not loop"
+        ),
+        "why": "Invisible individually, expensive collectively across thousands of sessions",
+    },
+    "oververbose_tool": {
+        "title": "Bloated tool responses",
+        "severity": "MEDIUM",
+        "claude_md_fix": (
+            "## Tool Output Rules\n"
+            "- Pipe large bash output through head/tail/grep before returning\n"
+            "- For log files: extract error lines only\n"
+            "- Never read binary files or build artifacts"
+        ),
+        "why": "50KB+ results consume context that could hold 25 more productive turns",
+    },
+}
+
+
+def audit_project(project_filter=None, limit=200):
+    """
+    Full waste audit across JSONL sessions.
+    Returns waste summary + ranked prescriptions.
+    Does not touch existing analyzer.py exports.
+    """
+    from collections import defaultdict
+
+    results = []
+    for i, session in enumerate(iter_jsonl_sessions(project_filter)):
+        if limit and i >= limit:
+            break
+        results.append(classify_waste_session(session))
+
+    totals = defaultdict(lambda: {"count": 0, "tokens": 0})
+    for r in results:
+        for bin_name, data in r["bins"].items():
+            totals[bin_name]["count"] += data["count"]
+            totals[bin_name]["tokens"] += data["tokens"]
+
+    prescriptions = []
+    for bin_name, data in sorted(
+        totals.items(), key=lambda x: x[1]["tokens"], reverse=True
+    ):
+        if data["count"] > 0 and bin_name in WASTE_PRESCRIPTIONS:
+            p = WASTE_PRESCRIPTIONS[bin_name].copy()
+            p["bin"] = bin_name
+            p["occurrences"] = data["count"]
+            p["wasted_tokens"] = data["tokens"]
+            prescriptions.append(p)
+
+    return {
+        "sessions_analyzed": len(results),
+        "waste_bins": dict(totals),
+        "prescriptions": prescriptions,
+        "top_waste": sorted(
+            totals.items(), key=lambda x: x[1]["tokens"], reverse=True
+        )[:5],
+    }

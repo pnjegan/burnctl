@@ -1,4 +1,4 @@
-# Contributing to Claudash
+# Contributing to burnctl
 
 ## Reporting bugs
 
@@ -23,8 +23,8 @@ Open an issue with:
 ## Development setup
 
 ```bash
-git clone https://github.com/pnjegan/claudash
-cd claudash
+git clone https://github.com/pnjegan/burnctl
+cd burnctl
 python3 cli.py dashboard  # zero deps, just run it
 ```
 

@@ -378,6 +378,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "accounts_active": list(accounts.keys()),
             })
 
+        elif path == "/api/burnrate":
+            from burn_rate import get_burn_rate, get_block_status, detect_loops
+            self._serve_json({
+                "burn_rate": get_burn_rate(),
+                "block_status": get_block_status(),
+                "loops": detect_loops(),
+            })
+
         elif path == "/api/real-story":
             import time as _time
             stories = get_real_story_insights()
@@ -977,7 +985,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                             self._serve_json({
                                 "success": False,
                                 "error": gen["error"],
-                                "hint": "Run `claudash keys --set-provider` to configure an LLM provider.",
+                                "hint": "Run `burnctl keys --set-provider` to configure an LLM provider.",
                             }, 400)
                         else:
                             fix_id = insert_generated_fix(conn, we["id"], gen)
@@ -1028,14 +1036,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
                             self._serve_json({"success": False, "error": "fix has no rule_text to apply"}, 400)
                         else:
                             # Backup
-                            backup = f"{target}.claudash-backup-{int(time.time())}"
+                            backup = f"{target}.burnctl-backup-{int(time.time())}"
                             try:
                                 shutil.copy2(target, backup)
                             except OSError as _e:
                                 self._serve_json({"success": False, "error": f"backup failed: {_e}"}, 500)
                                 return
                             # Append
-                            block = f"\n\n<!-- Added by Claudash fix #{fix_id} {time.strftime('%Y-%m-%d')} -->\n{rule_text}\n"
+                            block = f"\n\n<!-- Added by burnctl fix #{fix_id} {time.strftime('%Y-%m-%d')} -->\n{rule_text}\n"
                             try:
                                 with open(target, "a", encoding="utf-8") as f:
                                     f.write(block)
@@ -1231,7 +1239,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def _serve_404(self):
         html = (
             '<!DOCTYPE html>\n<html>\n<head>\n'
-            '  <title>Claudash</title>\n'
+            '  <title>burnctl</title>\n'
             '  <meta http-equiv="refresh" content="5;url=/">\n'
             '  <style>\n'
             '    body { font-family: monospace; padding: 40px;\n'
@@ -1239,7 +1247,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             '    code { background: #E8E0D0; padding: 2px 6px; }\n'
             '  </style>\n'
             '</head>\n<body>\n'
-            '  <h2>Claudash</h2>\n'
+            '  <h2>burnctl</h2>\n'
             '  <p>Page not found. Redirecting to dashboard in 5 seconds...</p>\n'
             '  <p>If this keeps happening: <a href="/">click here</a></p>\n'
             '</body>\n</html>'

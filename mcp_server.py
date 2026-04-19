@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Claudash MCP server — exposes dashboard data to Claude Code via the
+"""burnctl MCP server — exposes dashboard data to Claude Code via the
 Model Context Protocol (JSON-RPC 2.0 over stdio).
 
 Claude Code loads MCP servers from ~/.claude/settings.json:
 
     {
       "mcpServers": {
-        "claudash": {
+        "burnctl": {
           "command": "python3",
-          "args": ["/absolute/path/to/claudash/mcp_server.py"]
+          "args": ["/absolute/path/to/burnctl/mcp_server.py"]
         }
       }
     }
@@ -20,18 +20,18 @@ Supported methods:
   tools/call                     — invoke one of the tools
 
 Read tools (5, v1):
-  claudash_summary        — per-account usage rollup
-  claudash_project        — detailed project metrics
-  claudash_window         — current 5-hour window status
-  claudash_insights       — active actionable insights
-  claudash_action_center  — top 3 recommended actions
+  burnctl_summary        — per-account usage rollup
+  burnctl_project        — detailed project metrics
+  burnctl_window         — current 5-hour window status
+  burnctl_insights       — active actionable insights
+  burnctl_action_center  — top 3 recommended actions
 
 Write-side tools (5, v2-F5):
-  claudash_trigger_scan     — force an immediate scan + waste-detect pass
-  claudash_report_waste     — Claude Code reports a waste event it observed
-  claudash_generate_fix     — produce a CLAUDE.md rule for a waste_event
-  claudash_dismiss_insight  — mark an insight as dismissed
-  claudash_get_warnings     — poll the mcp_warnings queue
+  burnctl_trigger_scan     — force an immediate scan + waste-detect pass
+  burnctl_report_waste     — Claude Code reports a waste event it observed
+  burnctl_generate_fix     — produce a CLAUDE.md rule for a waste_event
+  burnctl_dismiss_insight  — mark an insight as dismissed
+  burnctl_get_warnings     — poll the mcp_warnings queue
 
 The server reads SQLite directly (no HTTP) so it does NOT need the web
 server to be running. Works offline and in cron jobs.
@@ -45,7 +45,7 @@ import os
 import sys
 import time
 
-# Ensure we can import the rest of the Claudash package regardless of cwd
+# Ensure we can import the rest of the burnctl package regardless of cwd
 _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
@@ -60,13 +60,13 @@ from analyzer import (  # noqa: E402
 
 
 PROTOCOL_VERSION = "2024-11-05"
-SERVER_NAME = "claudash"
+SERVER_NAME = "burnctl"
 from _version import VERSION as SERVER_VERSION
 
 
 # ─── Tool implementations ────────────────────────────────────────
 
-def _tool_claudash_summary(args):
+def _tool_burnctl_summary(args):
     conn = get_conn()
     try:
         accounts_cfg = get_accounts_config(conn)
@@ -92,7 +92,7 @@ def _tool_claudash_summary(args):
         conn.close()
 
 
-def _tool_claudash_project(args):
+def _tool_burnctl_project(args):
     project_name = (args or {}).get("project_name") or ""
     if not project_name:
         return {"error": "project_name is required"}
@@ -134,7 +134,7 @@ def _tool_claudash_project(args):
         conn.close()
 
 
-def _tool_claudash_window(args):
+def _tool_burnctl_window(args):
     conn = get_conn()
     try:
         accounts_cfg = get_accounts_config(conn)
@@ -164,7 +164,7 @@ def _tool_claudash_window(args):
         conn.close()
 
 
-def _tool_claudash_insights(args):
+def _tool_burnctl_insights(args):
     conn = get_conn()
     try:
         rows = get_insights(conn, account=None, dismissed=0, limit=50)
@@ -194,7 +194,7 @@ def _tool_claudash_insights(args):
         conn.close()
 
 
-def _tool_claudash_action_center(args):
+def _tool_burnctl_action_center(args):
     """Return up to 3 ranked, actionable recommendations."""
     conn = get_conn()
     try:
@@ -266,7 +266,7 @@ _ALLOWED_WASTE_PATTERNS = (
 )
 
 
-def _tool_claudash_trigger_scan(args):
+def _tool_burnctl_trigger_scan(args):
     """Full scan → insights → waste-pattern detection in one call."""
     from scanner import scan_all
     from insights import generate_insights as _gen_insights
@@ -294,7 +294,7 @@ def _tool_claudash_trigger_scan(args):
     }
 
 
-def _tool_claudash_report_waste(args):
+def _tool_burnctl_report_waste(args):
     """Claude-Code-reported waste event. Writes directly to waste_events."""
     from db import insert_waste_event
 
@@ -343,13 +343,13 @@ def _tool_claudash_report_waste(args):
         "status": "ok",
         "waste_event_id": event_id,
         "message": (
-            f"Waste event recorded. Run: claudash fix generate {event_id} "
+            f"Waste event recorded. Run: burnctl fix generate {event_id} "
             "to propose a CLAUDE.md rule."
         ),
     }
 
 
-def _tool_claudash_generate_fix(args):
+def _tool_burnctl_generate_fix(args):
     """Thin wrapper over fix_generator.generate_fix. Returns the proposed
     rule + metadata. Never applies automatically."""
     a = args or {}
@@ -382,7 +382,7 @@ def _tool_claudash_generate_fix(args):
                     "status": "offline",
                     "message": (
                         "Fix generator not configured. Run: "
-                        "claudash keys --set-provider"
+                        "burnctl keys --set-provider"
                     ),
                 }
             return {"status": "error", "message": err}
@@ -404,7 +404,7 @@ def _tool_claudash_generate_fix(args):
     }
 
 
-def _tool_claudash_dismiss_insight(args):
+def _tool_burnctl_dismiss_insight(args):
     """Set insights.dismissed=1 for the given id."""
     a = args or {}
     iid_raw = a.get("insight_id")
@@ -431,7 +431,7 @@ def _tool_claudash_dismiss_insight(args):
     return {"status": "ok", "message": f"Insight {iid} dismissed."}
 
 
-def _tool_claudash_get_warnings(args):
+def _tool_burnctl_get_warnings(args):
     """Return pending MCP warnings for a project. Auto-acks severity='red'
     warnings as one-shot alerts (caller should surface them immediately)."""
     from db import get_pending_warnings, acknowledge_warning
@@ -475,60 +475,60 @@ def _tool_claudash_get_warnings(args):
 
 TOOLS = [
     {
-        "name": "claudash_summary",
-        "description": "Get current Claude usage summary from Claudash (all accounts: window burn, ROI, cache hit rate, sessions today, top project).",
+        "name": "burnctl_summary",
+        "description": "Get current Claude usage summary from burnctl (all accounts: window burn, ROI, cache hit rate, sessions today, top project).",
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
-        "handler": _tool_claudash_summary,
+        "handler": _tool_burnctl_summary,
     },
     {
-        "name": "claudash_project",
+        "name": "burnctl_project",
         "description": "Get detailed usage metrics for a specific Claude project (cost, sessions, cache hit rate, avg turns, compaction, dominant model, week-over-week change).",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "project_name": {
                     "type": "string",
-                    "description": "The project name as shown in Claudash (e.g. 'WikiLoop', 'Tidify').",
+                    "description": "The project name as shown in burnctl (e.g. 'WikiLoop', 'Tidify').",
                 },
             },
             "required": ["project_name"],
             "additionalProperties": False,
         },
-        "handler": _tool_claudash_project,
+        "handler": _tool_burnctl_project,
     },
     {
-        "name": "claudash_window",
+        "name": "burnctl_window",
         "description": "Check the current Claude 5-hour window burn status for every account — percentage used, burn rate, predicted exhaust time, and whether it's safe to start a heavy session.",
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
-        "handler": _tool_claudash_window,
+        "handler": _tool_burnctl_window,
     },
     {
-        "name": "claudash_insights",
+        "name": "burnctl_insights",
         "description": "Get active actionable insights about Claude usage patterns (cache spikes, model waste, window risk, ROI milestones, waste patterns).",
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
-        "handler": _tool_claudash_insights,
+        "handler": _tool_burnctl_insights,
     },
     {
-        "name": "claudash_action_center",
+        "name": "burnctl_action_center",
         "description": "Get the top 3 recommended actions to optimize Claude usage right now, ranked by priority. Each action has why/action/impact fields.",
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
-        "handler": _tool_claudash_action_center,
+        "handler": _tool_burnctl_action_center,
     },
     # ── v2-F5: write-side + event-reporting tools ──
     {
-        "name": "claudash_trigger_scan",
+        "name": "burnctl_trigger_scan",
         "description": (
-            "Trigger an immediate Claudash scan and waste detection run. "
+            "Trigger an immediate burnctl scan and waste detection run. "
             "Use when you've just finished a large task and want fresh data."
         ),
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
-        "handler": _tool_claudash_trigger_scan,
+        "handler": _tool_burnctl_trigger_scan,
     },
     {
-        "name": "claudash_report_waste",
+        "name": "burnctl_report_waste",
         "description": (
             "Report a waste event observed during this session directly to "
-            "Claudash. Use when you notice Claude retrying the same tool, "
+            "burnctl. Use when you notice Claude retrying the same tool, "
             "re-reading files, or a session growing very long."
         ),
         "inputSchema": {
@@ -536,7 +536,7 @@ TOOLS = [
             "properties": {
                 "project": {
                     "type": "string",
-                    "description": "Project name as shown in Claudash.",
+                    "description": "Project name as shown in burnctl.",
                 },
                 "pattern_type": {
                     "type": "string",
@@ -555,10 +555,10 @@ TOOLS = [
             "required": ["project", "pattern_type"],
             "additionalProperties": False,
         },
-        "handler": _tool_claudash_report_waste,
+        "handler": _tool_burnctl_report_waste,
     },
     {
-        "name": "claudash_generate_fix",
+        "name": "burnctl_generate_fix",
         "description": (
             "Generate a CLAUDE.md fix for a detected waste event using the "
             "configured LLM provider. Returns the proposed rule text for "
@@ -575,10 +575,10 @@ TOOLS = [
             "required": ["waste_event_id"],
             "additionalProperties": False,
         },
-        "handler": _tool_claudash_generate_fix,
+        "handler": _tool_burnctl_generate_fix,
     },
     {
-        "name": "claudash_dismiss_insight",
+        "name": "burnctl_dismiss_insight",
         "description": "Dismiss an insight that is no longer relevant.",
         "inputSchema": {
             "type": "object",
@@ -591,12 +591,12 @@ TOOLS = [
             "required": ["insight_id"],
             "additionalProperties": False,
         },
-        "handler": _tool_claudash_dismiss_insight,
+        "handler": _tool_burnctl_dismiss_insight,
     },
     {
-        "name": "claudash_get_warnings",
+        "name": "burnctl_get_warnings",
         "description": (
-            "Get any pending warnings Claudash has queued for this project. "
+            "Get any pending warnings burnctl has queued for this project. "
             "Call this at the start of a session to check for alerts."
         ),
         "inputSchema": {
@@ -614,7 +614,7 @@ TOOLS = [
             "required": ["project"],
             "additionalProperties": False,
         },
-        "handler": _tool_claudash_get_warnings,
+        "handler": _tool_burnctl_get_warnings,
     },
 ]
 
@@ -719,13 +719,13 @@ def run_test():
     # short-circuit to a graceful error dict.
     SKIP_FULL_EXECUTION = {
         # A real scan is O(all-files); too slow for a smoke test.
-        "claudash_trigger_scan": "SKIP",
+        "burnctl_trigger_scan": "SKIP",
     }
     errors = []
     for tool in TOOLS:
         try:
             name = tool["name"]
-            if name == "claudash_project":
+            if name == "burnctl_project":
                 conn = get_conn()
                 row = conn.execute(
                     "SELECT project FROM sessions WHERE project IS NOT NULL "
