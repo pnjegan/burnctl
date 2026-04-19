@@ -1,4 +1,4 @@
-# Claudash — Changelog
+# burnctl — Changelog (continued from claudash v3.x)
 
 ## [2026-04-14] Session 9 — Reliability, npm package live, version 1.0.11 published
 

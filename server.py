@@ -402,7 +402,27 @@ class DashboardHandler(BaseHTTPRequestHandler):
         elif path == "/api/realstory":
             project = params.get("project", [None])[0]
             if not project:
-                self._serve_json({"error": "project parameter required"}, 400)
+                # No project specified — return top-3 project rollup + the
+                # general real-story insights so callers have something
+                # actionable before asking for ?project=X.
+                conn = get_conn()
+                try:
+                    top_rows = conn.execute(
+                        "SELECT project, COUNT(*) AS sessions "
+                        "FROM sessions GROUP BY project "
+                        "ORDER BY sessions DESC LIMIT 3"
+                    ).fetchall()
+                    top_projects = [
+                        {"project": r[0], "sessions": r[1]}
+                        for r in top_rows
+                    ]
+                finally:
+                    conn.close()
+                self._serve_json({
+                    "top_projects": top_projects,
+                    "stories": get_real_story_insights(),
+                    "hint": "Pass ?project=X for project-specific analysis",
+                })
                 return
             days = int(params.get("days", ["30"])[0])
             since = int(time.time()) - days * 86400
