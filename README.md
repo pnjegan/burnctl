@@ -22,7 +22,7 @@ npx burnctl@latest audit
 
 > Renamed and rebooted from `claudash` 3.x. Same engine; sharper focus.
 
-![Dashboard screenshot](docs/screenshots/dashboard.png)
+![Dashboard screenshot](screenshots/burnctl.png)
 
 ---
 
