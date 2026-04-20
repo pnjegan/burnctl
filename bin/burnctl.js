@@ -47,10 +47,22 @@ if (args.includes('--version') || args.includes('-v')) {
 }
 
 // ── Default: dashboard mode (no subcommand, or first arg is "dashboard")
-dashboardMode().catch(err => {
-  console.error('burnctl: ' + err.message);
+if (!first || first === 'dashboard') {
+  dashboardMode().catch(err => {
+    console.error('burnctl: ' + err.message);
+    process.exit(1);
+  });
+} else {
+  // ── Anything else with a non-flag first arg = unknown command. Don't fall
+  // through to dashboard mode — that hides typos behind a server start.
+  if (first.startsWith('-')) {
+    console.error('burnctl: unrecognized option ' + first);
+  } else {
+    console.error('burnctl: unknown command "' + first + '"');
+  }
+  console.error('Run `burnctl --help` for the command list.');
   process.exit(1);
-});
+}
 
 
 // ──────────────────────────────────────────────────────────────────
@@ -72,7 +84,11 @@ function printHelp() {
   console.log('  burnctl loops                 Detect retry-loop activity');
   console.log('  burnctl block                 5-hour block totals (observed)');
   console.log('  burnctl statusline            One-line statusline output');
+  console.log('  burnctl peak-hours            Mon-Fri 13:00-19:00 UTC peak status');
+  console.log('  burnctl version-check         Flag known-bad Claude Code versions');
   console.log('  burnctl audit [project]       JSONL waste-pattern audit');
+  console.log('  burnctl resume-audit [days]   Detect cache-bust signals (5m TTL etc)');
+  console.log('  burnctl variance [project]    Session cost variance profiler (CV)');
   console.log('  burnctl fix start "desc" --project X    Start measurement');
   console.log('  burnctl fix result <id>       Show before/after delta');
   console.log('  burnctl scan                  Scan new sessions');

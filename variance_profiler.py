@@ -19,17 +19,20 @@ from collections import defaultdict
 
 
 def load_db():
+    """Locate usage.db without baking in any maintainer-specific paths.
+
+    Lookup order:
+      1. data/usage.db  (relative to current working directory)
+      2. ~/.burnctl/data/usage.db  (npm/git-clone install convention)
+    Returns sqlite3 Connection or None.
+    """
     candidates = [
-        os.path.expanduser("~/projects/burnctl/data/usage.db"),
         "data/usage.db",
+        os.path.expanduser("~/.burnctl/data/usage.db"),
     ]
     for c in candidates:
         if os.path.exists(c):
             return sqlite3.connect(c)
-    # Fall back to ~/.burnctl/data convention if installed via npm wrapper
-    home_db = os.path.expanduser("~/.burnctl/data/usage.db")
-    if os.path.exists(home_db):
-        return sqlite3.connect(home_db)
     return None
 
 
@@ -107,7 +110,8 @@ def run_variance(project=None, days=60):
 
     conn = load_db()
     if not conn:
-        print("❌ No database found. Run 'burnctl scan' first.")
+        print("No burnctl database found.")
+        print("Run `burnctl scan` from your project directory first.")
         return
 
     rows = get_session_stats(conn, project, days)

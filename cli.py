@@ -1861,15 +1861,24 @@ def cmd_fix_result():
     check_fix(mid)
 
 
+def _no_db_friendly_exit():
+    """Shared friendly message when no burnctl DB exists yet. Exits 0."""
+    print("No burnctl database found.")
+    print("Run `burnctl scan` from your project directory first.")
+    sys.exit(0)
+
+
 def cmd_burnrate():
     """Print live burn rate (tokens/min, $/min, $/hr projected)."""
-    from burn_rate import get_burn_rate
+    from burn_rate import get_burn_rate, resolve_db_path, DB_DEFAULT
     from peak_hour import get_peak_status
     peak = get_peak_status()
     print(peak["message"])
     if peak["in_peak"]:
         print(f"   {peak['detail']}")
     print()
+    if resolve_db_path(DB_DEFAULT) is None:
+        _no_db_friendly_exit()
     br = get_burn_rate()
     if "error" in br:
         print(f"ERROR: {br['error']}")
@@ -1907,7 +1916,9 @@ def cmd_variance():
 
 def cmd_loops():
     """Detect retry-loop activity (5+ sessions in 10 min, avg gap < 60s)."""
-    from burn_rate import detect_loops
+    from burn_rate import detect_loops, resolve_db_path, DB_DEFAULT
+    if resolve_db_path(DB_DEFAULT) is None:
+        _no_db_friendly_exit()
     loops = detect_loops()
     if not loops:
         print("✓ No retry loops detected in last 10 min")
@@ -1921,7 +1932,9 @@ def cmd_loops():
 
 def cmd_block():
     """Show 5-hour block totals (observed only — no quota inference)."""
-    from burn_rate import get_block_status
+    from burn_rate import get_block_status, resolve_db_path, DB_DEFAULT
+    if resolve_db_path(DB_DEFAULT) is None:
+        _no_db_friendly_exit()
     block = get_block_status()
     if "error" in block:
         print(f"ERROR: {block['error']}")

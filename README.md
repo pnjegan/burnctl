@@ -105,6 +105,11 @@ burnctl dashboard       # web UI on http://localhost:8080
 burnctl burnrate        # tokens/min, $/min, $/hr (last 5 min)
 burnctl loops           # show retry-loop activity in last 10 min
 burnctl block           # 5-hour rolling block totals
+burnctl peak-hours      # Mon-Fri 13:00-19:00 UTC peak status (drain context)
+burnctl version-check   # flag known-bad Claude Code versions (2.1.69-2.1.89)
+burnctl audit [proj]    # JSONL waste-pattern audit (loops, dead-ends, rereads)
+burnctl resume-audit    # detect cache-bust signals (5m TTL, low hit rate)
+burnctl variance [proj] # per-project cost variance with root-cause diagnosis
 burnctl statusline      # one-line output for Claude Code statusline hook
 burnctl scan            # one-shot scan of new JSONL sessions
 burnctl waste           # waste-pattern detector summary
