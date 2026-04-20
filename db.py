@@ -77,6 +77,11 @@ def init_db():
         );
         CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(created_at);
 
+        -- DEPRECATED: claude_ai_usage is superseded by claude_ai_snapshots
+        -- (richer schema with 5h/7d utilization). Kept with CREATE IF NOT EXISTS
+        -- so existing DBs don't break on open; scheduled for DROP in a future
+        -- migration once no code path still reads it.
+        -- TODO: remove in v5.x + add migration step that drops this table.
         CREATE TABLE IF NOT EXISTS claude_ai_usage (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             account_label TEXT,

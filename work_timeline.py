@@ -40,7 +40,6 @@ SWITCH_GAP_SEC = 1800  # 30 min — if surfaces within this gap, count as a swit
 def load_db():
     candidates = [
         "data/usage.db",
-        os.path.expanduser("~/projects/burnctl/data/usage.db"),
         os.path.expanduser("~/.burnctl/data/usage.db"),
     ]
     for p in candidates:

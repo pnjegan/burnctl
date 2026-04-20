@@ -71,6 +71,7 @@ def run_version_check():
 
     # 1. Claude Code version
     version, source = get_claude_version()
+    bad = False
     if version:
         print()
         print(f"Claude Code version: {version}  (via `{source}`)")
@@ -80,22 +81,26 @@ def run_version_check():
             print(f"   Cache costs in this range can run 10-20x normal.")
             print(f"   Fix: npm update -g @anthropic-ai/claude-code  (target v{SAFE_VERSION}+)")
         else:
-            print(f"✓ Not in known-bad range (2.1.69 – 2.1.89)")
+            print(f"✓ Not in known-bad range (2.1.69 – 2.1.89) — you're on a clean version")
     else:
         print()
         print("⚠️  Could not detect Claude Code version")
         print("   Try: claude --version")
         print("        npx @anthropic-ai/claude-code --version")
 
-    # 2. Cache-fix interceptor
-    print()
+    # 2. Cache-fix interceptor — only surface the nudge if the user is on a
+    # bad version or we couldn't detect the version at all. On a clean
+    # version, mentioning the interceptor just confuses users into thinking
+    # they're missing a required component.
     installed, path = check_cache_fix_installed()
     if installed:
+        print()
         print(f"✓ Cache-fix interceptor detected: {path}")
         print(f"  Community fix for the --resume cache-bust is active.")
-    else:
+    elif bad or not version:
+        print()
         print(f"ℹ  Cache-fix interceptor NOT installed")
-        print(f"   For users on bad versions or affected by --resume cache-bust:")
+        print(f"   Recommended on bad versions:")
         print(f"   {CACHE_FIX_REPO}")
 
     # 3. Quick reminders

@@ -790,10 +790,22 @@ def generate_fix(waste_event_id, conn=None):
 
 
 def insert_generated_fix(conn, waste_event_id, gen):
-    """Persist a generated fix as status='proposed'. Returns fix_id or None."""
+    """Persist a generated fix as status='proposed'. Returns fix_id or None.
+
+    Dedupes on (project, fix_type, title) to prevent stacking identical
+    AI-generated fixes across repeated audits of the same waste pattern.
+    """
     if gen.get("error"):
         return None
     title = f"AI: {gen['pattern_type']} fix for {gen['project']}"
+    cur = conn.execute(
+        "SELECT id FROM fixes WHERE project = ? AND fix_type = ? AND title = ? "
+        "AND status IN ('proposed', 'measuring', 'confirmed') LIMIT 1",
+        (gen["project"], "claude_md_rule", title),
+    )
+    existing = cur.fetchone()
+    if existing:
+        return existing[0]  # idempotent — return the already-stored fix id
     try:
         cur = conn.execute(
             "INSERT INTO fixes "

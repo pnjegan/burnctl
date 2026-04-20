@@ -44,6 +44,18 @@ from claude_ai_tracker import (
 
 TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
 
+# Post-rebrand display-name remap. Sessions scanned before the rename still
+# carry the old dir-derived project name in the DB; remap for user-visible
+# surfaces without rewriting historical rows.
+_PROJECT_DISPLAY_REMAP = {
+    "Claudash": "burnctl",
+    "claudash": "burnctl",
+}
+
+
+def _remap_project_name(name):
+    return _PROJECT_DISPLAY_REMAP.get(name, name)
+
 # Response cache for /api/data — LRU-capped so unknown account params can't grow it unboundedly.
 _data_cache = OrderedDict()
 _DATA_CACHE_MAX = 64
@@ -321,6 +333,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             conn = get_conn()
             data = project_metrics(conn, account)
             conn.close()
+            for p in data:
+                if "name" in p:
+                    p["name"] = _remap_project_name(p["name"])
             self._serve_json(data)
 
         elif path == "/api/insights":
@@ -376,6 +391,32 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "total_records": total,
                 "last_scan": get_last_scan_time(),
                 "accounts_active": list(accounts.keys()),
+            })
+
+        elif path == "/api/stats":
+            conn = get_conn()
+            cur = conn.cursor()
+            cur.execute("SELECT COUNT(*), COUNT(DISTINCT session_id), SUM(cost_usd), "
+                        "SUM(input_tokens+output_tokens), "
+                        "SUM(CASE WHEN is_subagent=1 THEN 1 ELSE 0 END) "
+                        "FROM sessions")
+            row = cur.fetchone() or (0, 0, 0.0, 0, 0)
+            cur.execute("SELECT COUNT(*), SUM(token_cost) FROM waste_events")
+            waste_row = cur.fetchone() or (0, 0.0)
+            cur.execute("SELECT COUNT(*) FROM fixes")
+            fix_count = cur.fetchone()[0]
+            conn.close()
+            self._serve_json({
+                "version": VERSION,
+                "total_turns": row[0] or 0,
+                "total_sessions": row[1] or 0,
+                "total_cost_usd": round(row[2] or 0.0, 2),
+                "total_tokens": row[3] or 0,
+                "subagent_turns": row[4] or 0,
+                "waste_events": waste_row[0] or 0,
+                "waste_cost_usd": round(waste_row[1] or 0.0, 2),
+                "fixes_recorded": fix_count or 0,
+                "last_scan": get_last_scan_time(),
             })
 
         elif path == "/api/burnrate":

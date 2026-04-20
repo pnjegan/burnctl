@@ -148,10 +148,18 @@ def analyze_cache_health(sessions):
         signals = []
         severity = "ok"
 
-        if total_cache_creation > 5000 and ttl_5m_ratio > 0.85:
+        # 5m TTL dominance alone is not actionable — a session with 90%+
+        # cache hit rate is healthy even if the TTL is short. Only flag
+        # when the short TTL is actually hurting us (hit rate < 50%).
+        if (
+            total_cache_creation > 5000
+            and ttl_5m_ratio > 0.85
+            and cache_read_ratio < 0.50
+        ):
             signals.append(
-                f"Cache TTL: {ttl_5m_ratio*100:.0f}% on 5-minute TTL "
-                f"(expires fast — full rebuild if you pause)"
+                f"Cache TTL: {ttl_5m_ratio*100:.0f}% on 5-minute TTL with "
+                f"{cache_read_ratio*100:.1f}% hit rate "
+                f"(expires fast AND misses — rebuilding context on pause)"
             )
             severity = "high"
 
