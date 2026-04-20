@@ -62,6 +62,7 @@
     "variance_profiler.py",
     "version_check.py",
     "waste_patterns.py",
+    "work_timeline.py",
     "templates/",
     "tools/hooks/",
     "CONTRIBUTING.md",
