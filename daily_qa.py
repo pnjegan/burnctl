@@ -22,9 +22,14 @@ from pathlib import Path
 
 
 QA_DIR = Path.home() / "projects" / "burnctl" / "qa-reports"
+REPO_DIR = Path(__file__).resolve().parent
 DASHBOARD = "http://localhost:8080"
 NPX_TIMEOUT = 90  # seconds per command — npx cold-start can be slow
 CURL_TIMEOUT = 10
+LOCAL_CMD_TIMEOUT = 30
+
+# Trend table thresholds — absolute percentage-point move considered drift
+TREND_DRIFT_PCT = 10.0
 
 # Claude Code version ranges (same as version_check.py)
 BAD_VERSION_RE = re.compile(r"^2\.1\.(6[9]|[78][0-9])$")
@@ -287,6 +292,246 @@ def run_all_tests():
     return results
 
 
+def capture_local_metrics():
+    """Run commands against the REAL local DB (not /tmp) to capture numeric
+    metrics the fresh-install suite cannot see. Returns a dict of
+    metric_name -> float.
+
+    Keep this pass short and read-only — this runs every day under cron.
+    """
+    metrics = {}
+
+    # fix-scoreboard — monthly savings
+    try:
+        proc = subprocess.run(
+            ["python3", str(REPO_DIR / "cli.py"), "fix-scoreboard"],
+            cwd=str(REPO_DIR),
+            capture_output=True,
+            text=True,
+            timeout=LOCAL_CMD_TIMEOUT,
+        )
+        out = (proc.stdout or "") + (proc.stderr or "")
+        m = re.search(r"API-equivalent monthly savings:\s*\$([\d,]+\.?\d*)", out)
+        if m:
+            metrics["fix_monthly_savings_usd"] = float(m.group(1).replace(",", ""))
+        m = re.search(r"Tokens saved.*:\s*([\d,]+)", out)
+        if m:
+            metrics["fix_tokens_saved"] = int(m.group(1).replace(",", ""))
+        m = re.search(r"Improving:\s*(\d+)", out)
+        if m:
+            metrics["fix_improving_count"] = int(m.group(1))
+    except Exception:
+        pass
+
+    # work-timeline — CC vs browser ratio (today only)
+    try:
+        proc = subprocess.run(
+            ["python3", str(REPO_DIR / "cli.py"), "work-timeline"],
+            cwd=str(REPO_DIR),
+            capture_output=True,
+            text=True,
+            timeout=LOCAL_CMD_TIMEOUT,
+        )
+        out = (proc.stdout or "") + (proc.stderr or "")
+        m = re.search(r"Claude Code CLI\s+(\d+)% of active time", out)
+        if m:
+            metrics["work_cc_pct"] = int(m.group(1))
+        m = re.search(r"Browser claude\.ai\s+(\d+)% of active time", out)
+        if m:
+            metrics["work_browser_pct"] = int(m.group(1))
+    except Exception:
+        pass
+
+    return metrics
+
+
+def extract_report_metrics(results, local_metrics):
+    """Build the machine-readable trend block embedded in each report."""
+    wow = sum(1 for r in results if r["status"] == WOW)
+    ok = sum(1 for r in results if r["status"] == OK)
+    dod = sum(1 for r in results if r["status"] == DOD)
+
+    kv = {
+        "wow_count": wow,
+        "ok_count": ok,
+        "dod_count": dod,
+    }
+
+    # pull from scored results
+    for r in results:
+        if r["name"] == "resume-audit":
+            m = re.search(r"\(([\d.]+)%\)", r["evidence"])
+            if m:
+                kv["resume_audit_flag_pct"] = float(m.group(1))
+        elif r["name"] == "api/stats":
+            m = re.search(r"\$([\d,]+\.?\d*)\s+across\s+([\d,]+)", r["evidence"])
+            if m:
+                kv["api_stats_cost_usd"] = float(m.group(1).replace(",", ""))
+                kv["api_stats_total_turns"] = int(m.group(2).replace(",", ""))
+        elif r["name"] == "api/health":
+            m = re.search(r"v([\d.]+)", r["evidence"])
+            if m:
+                kv["api_health_version"] = m.group(1)
+
+    # merge in local (real-DB) captures
+    kv.update(local_metrics)
+    return kv
+
+
+def format_trend_block(kv):
+    lines = ["<!-- trend-metrics:start -->"]
+    for k in sorted(kv.keys()):
+        v = kv[k]
+        if isinstance(v, float):
+            lines.append(f"{k}={v:.2f}")
+        else:
+            lines.append(f"{k}={v}")
+    lines.append("<!-- trend-metrics:end -->")
+    return "\n".join(lines)
+
+
+def parse_trend_block(report_text):
+    """Extract kv pairs from a report's trend-metrics block. Returns dict."""
+    m = re.search(
+        r"<!--\s*trend-metrics:start\s*-->\s*(.*?)\s*<!--\s*trend-metrics:end\s*-->",
+        report_text,
+        re.DOTALL,
+    )
+    if not m:
+        return {}
+    kv = {}
+    for line in m.group(1).splitlines():
+        line = line.strip()
+        if not line or "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        k, v = k.strip(), v.strip()
+        try:
+            kv[k] = float(v) if "." in v else int(v)
+        except ValueError:
+            kv[k] = v  # e.g. version string
+    return kv
+
+
+def load_trend_history(days_back=7):
+    """Load all qa-reports/*.md from the last N days with a trend block.
+
+    Returns list of (timestamp, kv) sorted by timestamp. Excludes latest.md
+    since timestamped files already cover the same content.
+    """
+    cutoff = time.time() - days_back * 86400
+    history = []
+    for p in sorted(QA_DIR.glob("*.md")):
+        if p.name == "latest.md":
+            continue
+        m = re.match(r"^(\d{4}-\d{2}-\d{2})-(\d{2})\.md$", p.name)
+        if not m:
+            continue
+        try:
+            dt = datetime.datetime.strptime(
+                f"{m.group(1)} {m.group(2)}", "%Y-%m-%d %H"
+            ).replace(tzinfo=datetime.timezone.utc)
+        except ValueError:
+            continue
+        if dt.timestamp() < cutoff:
+            continue
+        try:
+            kv = parse_trend_block(p.read_text())
+        except OSError:
+            continue
+        if kv:
+            history.append((dt, kv))
+    return history
+
+
+def render_trend_table():
+    """Human-readable trend table across last 7 days of reports."""
+    history = load_trend_history(7)
+    if len(history) < 2:
+        print()
+        print(f"burnctl trend — need at least 2 snapshots, have {len(history)}")
+        print(f"Reports dir: {QA_DIR}")
+        print()
+        print("Run `burnctl qa` daily (or let cron do it). After 2+ runs, the")
+        print("trend table will show movement per metric with drift flags.")
+        return
+
+    # pick three anchor snapshots: oldest, middle, newest
+    newest = history[-1]
+    oldest = history[0]
+    middle = history[len(history) // 2]
+
+    metrics_order = [
+        ("wow_count",              "WOW commands",              "count",   False),
+        ("dod_count",              "DOD commands",              "count",   True),
+        ("resume_audit_flag_pct",  "resume-audit noise",        "percent", True),
+        ("api_stats_cost_usd",     "total cost (DB lifetime)",  "usd",     False),
+        ("api_stats_total_turns",  "total turns logged",        "int",     False),
+        ("fix_monthly_savings_usd","fixes monthly savings",     "usd",     False),
+        ("fix_improving_count",    "fixes improving",           "count",   False),
+        ("work_cc_pct",            "CC share of active time",   "percent", False),
+        ("work_browser_pct",       "browser share",             "percent", False),
+    ]
+
+    print()
+    print(f"burnctl trend — {len(history)} snapshot(s) over the last 7 days")
+    print("=" * 74)
+    print(f"{'METRIC':<28} {'OLDEST':>12} {'MID':>10} {'LATEST':>10}  TREND")
+    print("-" * 74)
+
+    def fmt(v, kind):
+        if v is None:
+            return "—"
+        if kind == "usd":
+            return f"${v:,.0f}"
+        if kind == "percent":
+            return f"{v:.1f}%"
+        if kind == "int":
+            return f"{v:,}"
+        return str(v)
+
+    def direction(a, b, lower_is_better):
+        if a is None or b is None:
+            return "       —"
+        if a == 0:
+            return "  (new)  "
+        delta = b - a
+        pct = (delta / a * 100) if a else 0
+        drift_trigger = TREND_DRIFT_PCT
+        if abs(pct) < drift_trigger / 2:
+            return "[stable] "
+        if (delta > 0 and not lower_is_better) or (delta < 0 and lower_is_better):
+            return f"[OK] {pct:+.0f}%  "
+        # wrong direction — flag drift if big enough
+        if abs(pct) >= drift_trigger:
+            return f"[DRIFT] {pct:+.0f}%"
+        return f"[slip] {pct:+.0f}% "
+
+    def get(kv, key):
+        return kv.get(key)
+
+    for key, label, kind, lower_is_better in metrics_order:
+        oldv = get(oldest[1], key)
+        midv = get(middle[1], key)
+        newv = get(newest[1], key)
+        arrow = direction(oldv, newv, lower_is_better)
+        print(
+            f"{label:<28} "
+            f"{fmt(oldv, kind):>12} "
+            f"{fmt(midv, kind):>10} "
+            f"{fmt(newv, kind):>10}  "
+            f"{arrow}"
+        )
+
+    print("-" * 74)
+    print(f"oldest: {oldest[0].strftime('%Y-%m-%d %H:%M UTC')}")
+    print(f"latest: {newest[0].strftime('%Y-%m-%d %H:%M UTC')}")
+    print(f"snapshots used: {len(history)}")
+    print()
+    print(f"Drift threshold: {TREND_DRIFT_PCT}% move in the wrong direction.")
+    print(f"Full reports: {QA_DIR}")
+
+
 def load_prior_results(path):
     """Parse a prior latest.md into {name: status}. Returns {} on any error."""
     if not path.exists():
@@ -309,7 +554,7 @@ def detect_regressions(current, prior):
     return regressions
 
 
-def format_report(results, regressions, prior_path):
+def format_report(results, regressions, prior_path, trend_block=""):
     wow_count = sum(1 for r in results if r["status"] == WOW)
     ok_count = sum(1 for r in results if r["status"] == OK)
     dod_count = sum(1 for r in results if r["status"] == DOD)
@@ -357,18 +602,29 @@ def format_report(results, regressions, prior_path):
         lines.append(f"- kind: `{r['kind']}`  arg: `{r['arg']}`  exit: `{r['exit_code']}`  elapsed: {r['elapsed_sec']}s")
         lines.append(f"- evidence: {r['evidence']}")
         lines.append("")
+
+    if trend_block:
+        lines.append(trend_block)
     return "\n".join(lines)
 
 
 def main():
+    # --trend renders historical view and exits; no new test run
+    if "--trend" in sys.argv:
+        render_trend_table()
+        return
+
     QA_DIR.mkdir(parents=True, exist_ok=True)
     prior_path = QA_DIR / "latest.md"
     prior = load_prior_results(prior_path)
 
     print("burnctl daily_qa — running 14 checks...")
     results = run_all_tests()
+    local_metrics = capture_local_metrics()
+    trend_kv = extract_report_metrics(results, local_metrics)
+    trend_block = format_trend_block(trend_kv)
     regressions = detect_regressions(results, prior)
-    report = format_report(results, regressions, prior_path)
+    report = format_report(results, regressions, prior_path, trend_block)
 
     # write timestamped + latest
     ts_utc = datetime.datetime.now(datetime.timezone.utc)
