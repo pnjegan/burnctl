@@ -1,14 +1,14 @@
-# Claudash — Session 22 handoff state
+# burnctl — Session 22 handoff state
 
 ## Current version: 3.3.0
 
 Full handoff: `.dev-cdc/SESSION_22_HANDOFF.md` (in repo from this commit).
 
 ## Pending manual step (Homebrew tap)
-- Create github.com/pnjegan/homebrew-claudash repo (cannot be done from CLI)
-- Copy docs/homebrew/claudash.rb to Formula/claudash.rb in that tap repo
+- Create github.com/pnjegan/homebrew-burnctl repo (cannot be done from CLI)
+- Copy docs/homebrew/burnctl.rb to Formula/burnctl.rb in that tap repo
   (sha256 is already real — 422c0aec…40e79 — since v3.3.1 tag is pushed)
-- Verify: brew tap pnjegan/claudash && brew install claudash
+- Verify: brew tap pnjegan/burnctl && brew install burnctl
 
 ## Pre-launch audit (2026-04-18) — PASS
 - Security: 0 critical, 0 high — no PII, no hardcoded credentials, no
@@ -81,10 +81,10 @@ Pick before touching anything else — it affects every future measurement.
 
 ## Live state
 - Running: pid 3191593, v3.3 code, port 8080
-- PID lock: /tmp/claudash.pid (SIGTERM-cleaned in v3.3, SIGKILL still leaks)
+- PID lock: /tmp/burnctl.pid (SIGTERM-cleaned in v3.3, SIGKILL still leaks)
 - DB: data/usage.db 13.5 MB, WAL, busy_timeout 30s
 - Backups: /root/backups/claudash/ (rclone-synced to Drive)
-- Override: CLAUDASH_BACKUP_DIR env var or --output DIR
+- Override: BURNCTL_BACKUP_DIR env var or --output DIR (legacy CLAUDASH_* still honored)
 
 ## Row snapshot
 - sessions: 23,023 turn-rows / 74 distinct session_ids
