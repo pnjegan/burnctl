@@ -472,6 +472,49 @@ def measure_fix(conn, fix_id):
     return delta, verdict, metrics
 
 
+def auto_measure_pending():
+    """Re-measure every fix currently in `measuring` status.
+
+    Designed to be called from a hook or by `burnctl measure --auto`. Silent
+    on errors so it never crashes a parent process. Returns a small summary
+    dict for callers that want to print results.
+    """
+    summary = {"measured": 0, "improving": 0, "worsened": 0,
+               "neutral": 0, "insufficient_data": 0, "errors": 0}
+    try:
+        from db import get_conn, init_db
+        init_db()
+        conn = get_conn()
+    except Exception:
+        return summary
+
+    try:
+        cur = conn.cursor()
+        try:
+            rows = cur.execute(
+                "SELECT id FROM fixes WHERE status='measuring'"
+            ).fetchall()
+        except sqlite3.OperationalError:
+            conn.close()
+            return summary
+
+        for (fix_id,) in rows:
+            try:
+                delta, verdict, _ = measure_fix(conn, fix_id)
+                summary["measured"] += 1
+                if verdict in summary:
+                    summary[verdict] += 1
+            except Exception:
+                summary["errors"] += 1
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    return summary
+
+
 # ─── Share card ──────────────────────────────────────────────────
 
 def build_share_card(fix, latest_measurement):

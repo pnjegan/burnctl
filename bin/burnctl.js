@@ -96,8 +96,10 @@ function printHelp() {
   console.log('  burnctl overhead-audit        Session startup overhead per project');
   console.log('  burnctl compact-audit         Compaction rate per project');
   console.log('  burnctl fix-scoreboard        Detect → fix → measure → prove loop');
+  console.log('  burnctl fix apply <id>        Append fix to CLAUDE.md, mark measuring');
   console.log('  burnctl fix start "desc" --project X    Start measurement');
   console.log('  burnctl fix result <id>       Show before/after delta');
+  console.log('  burnctl measure --auto        Re-measure all pending fixes');
   console.log('  burnctl scan                  Scan new sessions');
   console.log('  burnctl stats                 Per-account stats');
   console.log('  burnctl backup                Hot-copy DB');

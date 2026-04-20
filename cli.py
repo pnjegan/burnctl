@@ -59,6 +59,12 @@ Commands:
                 (requires 10+ sessions before result is meaningful)
   fix result <id>
                 Show before/after delta for a measurement
+  fix apply <id>
+                Append a generated fix to CLAUDE.md and mark it as
+                measuring. Idempotent (skips if already in file).
+  measure --auto
+                Re-measure every fix in `measuring` status. One-line
+                summary. Silent on errors. Safe for hooks.
   scan          Scan JSONL files for new sessions (incremental)
   scan --reprocess
                 Re-tag every existing session using the current
@@ -749,9 +755,30 @@ def cmd_fix_generate():
 
 
 def cmd_measure():
-    """Capture current metrics for a fix and print a plan-aware verdict."""
+    """Capture current metrics for a fix and print a plan-aware verdict.
+
+    With --auto, re-measures every fix in status='measuring' silently and
+    prints a one-line summary. Designed for hooks or quick polls.
+    """
+    if len(sys.argv) >= 3 and sys.argv[2] == "--auto":
+        from fix_tracker import auto_measure_pending
+        s = auto_measure_pending()
+        if s["measured"] == 0:
+            print("No fixes currently measuring.")
+            return
+        print(
+            f"Auto-measured {s['measured']} fix(es): "
+            f"{s['improving']} improving, "
+            f"{s['neutral']} neutral, "
+            f"{s['worsened']} worsened, "
+            f"{s['insufficient_data']} insufficient_data, "
+            f"{s['errors']} errors"
+        )
+        return
+
     if len(sys.argv) < 3 or not sys.argv[2].isdigit():
         print("Usage: python3 cli.py measure <fix_id>")
+        print("       python3 cli.py measure --auto   (re-measure all pending)")
         sys.exit(1)
     fix_id = int(sys.argv[2])
     init_db()
@@ -1960,6 +1987,20 @@ def cmd_fix_scoreboard():
     run_fix_scoreboard()
 
 
+def cmd_fix_apply():
+    """`burnctl fix apply <fix_id>` — write the fix to CLAUDE.md."""
+    from fix_apply import apply_fix
+    if len(sys.argv) < 4:
+        print("Usage: burnctl fix apply <fix_id>")
+        sys.exit(1)
+    try:
+        fix_id = int(sys.argv[3])
+    except ValueError:
+        print(f"Invalid fix id: {sys.argv[3]}")
+        sys.exit(1)
+    apply_fix(fix_id)
+
+
 def cmd_loops():
     """Detect retry-loop activity (5+ sessions in 10 min, avg gap < 60s)."""
     from burn_rate import detect_loops, resolve_db_path, DB_DEFAULT
@@ -2013,7 +2054,7 @@ def main():
 
     cmd = sys.argv[1].lower()
 
-    # Two-word commands: `fix add`, `fix generate <id>`, `fix start ...`, `fix result <id>`
+    # Two-word commands: `fix add | generate <id> | start ... | result <id> | apply <id>`
     if cmd == "fix":
         sub = sys.argv[2] if len(sys.argv) >= 3 else ""
         if sub == "add":
@@ -2028,18 +2069,23 @@ def main():
         if sub == "result":
             cmd_fix_result()
             return
+        if sub == "apply":
+            cmd_fix_apply()
+            return
         if sub in ("-h", "--help", "help", ""):
             print("Usage:")
             print("  python3 cli.py fix add")
             print("  python3 cli.py fix generate <waste_event_id>")
             print('  python3 cli.py fix start "<description>" --project X')
             print("  python3 cli.py fix result <measurement_id>")
+            print("  python3 cli.py fix apply <fix_id>")
             sys.exit(0)
         print("Usage:")
         print("  python3 cli.py fix add")
         print("  python3 cli.py fix generate <waste_event_id>")
         print('  python3 cli.py fix start "<description>" --project X')
         print("  python3 cli.py fix result <measurement_id>")
+        print("  python3 cli.py fix apply <fix_id>")
         sys.exit(1)
 
     commands = {
