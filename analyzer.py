@@ -216,6 +216,7 @@ def project_metrics(conn, account="all"):
         return []
 
     total_tokens_all = sum(r["input_tokens"] + r["output_tokens"] for r in rows_30d)
+    total_cost_all = sum(r["cost_usd"] for r in rows_30d)
 
     projects = {}
     for r in rows_30d:
@@ -256,6 +257,7 @@ def project_metrics(conn, account="all"):
         session_count = len(d["sessions"])
         avg_cost = d["cost"] / session_count if session_count > 0 else 0
         token_share = (d["tokens"] / total_tokens_all * 100) if total_tokens_all > 0 else 0
+        cost_share = (d["cost"] / total_cost_all * 100) if total_cost_all > 0 else 0
 
         total_model_rows = sum(d["models"].values())
         model_consistency = (d["models"].get(dominant_model, 0) / total_model_rows * 100) if total_model_rows > 0 else 100
@@ -285,6 +287,7 @@ def project_metrics(conn, account="all"):
             "account": d["account"],
             "account_label": ACCOUNTS.get(d["account"], {}).get("label", d["account"]),
             "token_share_pct": round(token_share, 1),
+            "cost_share_pct": round(cost_share, 1),
             "cost_usd_30d": round(d["cost"], 2),
             "dominant_model": dominant_model,
             "cache_hit_rate": round(cache_hit, 1),

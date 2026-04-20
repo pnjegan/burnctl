@@ -63,7 +63,8 @@ def run_fix_scoreboard():
     cur.execute("""
         SELECT
           f.id, f.project, f.waste_pattern, f.status, f.created_at,
-          fm.verdict, fm.delta_json, fm.measured_at
+          fm.verdict, fm.delta_json, fm.measured_at,
+          COALESCE(f.baseline_corrupted, 0) AS baseline_corrupted
         FROM fixes f
         LEFT JOIN fix_measurements fm
           ON fm.fix_id = f.id
@@ -89,8 +90,9 @@ def run_fix_scoreboard():
     print(f"{'#':<4} {'Project':<14} {'Pattern':<22} {'Verdict':<13} Impact")
     print("-" * 78)
 
+    baseline_corrupt_count = 0
     for (fid, proj, pattern, status, created_at,
-         verdict, delta_json, measured_at) in fixes:
+         verdict, delta_json, measured_at, baseline_corrupted) in fixes:
 
         delta = {}
         if delta_json:
@@ -102,6 +104,17 @@ def run_fix_scoreboard():
         tokens_saved = int(delta.get("tokens_saved") or 0)
         monthly_savings = float(delta.get("api_equivalent_savings_monthly") or 0)
         improvement_mult = delta.get("improvement_multiplier")
+
+        if baseline_corrupted:
+            # Snapshot-timing bug pre-v3.3 — baseline was captured AFTER
+            # the fix was applied. Honest display: show "baseline N/A"
+            # instead of inventing a delta. Do not count toward totals.
+            baseline_corrupt_count += 1
+            icon = "⚠️"
+            proj_s = (proj or "unknown")[:13]
+            pattern_s = (pattern or "")[:21]
+            print(f"{fid:<4} {proj_s:<14} {pattern_s:<22} {icon} baseline N/A  (pre-v3.3 snapshot-timing bug)")
+            continue
 
         if verdict == "improving":
             wins += 1
@@ -140,6 +153,9 @@ def run_fix_scoreboard():
     print(f"  ❌ Worsened:  {losers}")
     print(f"  ➡️  Neutral:   {neutral}")
     print(f"  ⏳ Pending:   {pending}")
+    if baseline_corrupt_count:
+        print(f"  ⚠️  Baseline N/A: {baseline_corrupt_count} "
+              f"(pre-v3.3 snapshot-timing bug — cannot compute delta)")
     if total_tokens_saved > 0:
         print()
         print(f"  Tokens saved (sum of improving fixes): {total_tokens_saved:,}")

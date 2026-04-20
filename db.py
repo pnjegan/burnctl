@@ -271,6 +271,11 @@ def init_db():
         ("generation_response", "TEXT"),
         ("applied_to_path", "TEXT"),
         ("waste_event_id", "INTEGER"),
+        # v4.1: flag fixes whose baseline was captured AFTER the fix
+        # was applied (fix_tracker snapshot timing bug pre-v3.3). These
+        # fixes cannot report a truthful before/after delta — scoreboard
+        # should show "baseline N/A" instead of misleading numbers.
+        ("baseline_corrupted", "INTEGER DEFAULT 0"),
     ]:
         if not _column_exists(conn, "fixes", col):
             conn.execute(f"ALTER TABLE fixes ADD COLUMN {col} {typedef}")

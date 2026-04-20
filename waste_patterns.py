@@ -372,14 +372,21 @@ def detect_all(conn=None):
         if not sid:
             continue
 
-        # Look up project/account/cost from sessions table
+        # Look up project/account/cost from sessions table. Exclude
+        # subagent sessions — their waste belongs to the parent's
+        # accounting, not the project they happen to be running under.
         info = conn.execute(
-            "SELECT project, account, COALESCE(SUM(cost_usd), 0) AS cost, COUNT(*) AS turns "
+            "SELECT project, account, "
+            "       COALESCE(SUM(cost_usd), 0) AS cost, "
+            "       COUNT(*) AS turns, "
+            "       MAX(is_subagent) AS is_sub "
             "FROM sessions WHERE session_id = ?",
             (sid,),
         ).fetchone()
         if not info or not info["project"]:
             continue
+        if info["is_sub"] == 1:
+            continue  # subagent session — skip
         project, account = info["project"], info["account"]
         session_cost = info["cost"] or 0
         turn_count = info["turns"] or 0

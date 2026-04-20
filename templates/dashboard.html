@@ -1216,7 +1216,7 @@ function authHeaders() {
     const recommendations = data.recommendations || {};
     $('proj-body').innerHTML = projs.map((p, i) => {
       const model = p.dominant_model ? p.dominant_model.replace('claude-', '') : 'sonnet';
-      const share = p.token_share_pct || 0;
+      const share = p.cost_share_pct != null ? p.cost_share_pct : (p.token_share_pct || 0);
       const cache = p.cache_hit_rate || 0;
       const wow = p.wow_change_pct || 0;
       const trendCls = wow > 10 ? 'trend-up' : (wow < -10 ? 'trend-down' : 'trend-flat');

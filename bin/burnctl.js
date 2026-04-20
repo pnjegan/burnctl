@@ -27,6 +27,8 @@ const SUBCOMMANDS = new Set([
   'work-timeline',
   // v4.0.11 additions
   'qa',
+  // v4.1 additions
+  'claudemd-audit', 'mcp-audit',
 ]);
 
 const args = process.argv.slice(2);
@@ -102,6 +104,8 @@ function printHelp() {
   console.log('  burnctl fix-scoreboard        Detect → fix → measure → prove loop');
   console.log('  burnctl work-timeline [--days N]  Unified CC + browser work timeline');
   console.log('  burnctl qa                    Daily QA suite — WOW/OK/DOD per command');
+  console.log('  burnctl claudemd-audit        Find dead CLAUDE.md rules (0 matching waste events)');
+  console.log('  burnctl mcp-audit             Find orphan MCP servers (configured but never called)');
   console.log('  burnctl fix apply <id>        Append fix to CLAUDE.md, mark measuring');
   console.log('  burnctl fix start "desc" --project X    Start measurement');
   console.log('  burnctl fix result <id>       Show before/after delta');

@@ -1999,6 +1999,18 @@ def cmd_qa():
     daily_qa.main()
 
 
+def cmd_claudemd_audit():
+    """`burnctl claudemd-audit` — find dead rules in CLAUDE.md files."""
+    from claudemd_audit import run_claudemd_audit
+    run_claudemd_audit()
+
+
+def cmd_mcp_audit():
+    """`burnctl mcp-audit` — find orphan MCP servers never called in 30d."""
+    from mcp_audit import run_mcp_audit
+    run_mcp_audit()
+
+
 def cmd_fix_apply():
     """`burnctl fix apply <fix_id>` — write the fix to CLAUDE.md."""
     from fix_apply import apply_fix
@@ -2135,6 +2147,8 @@ def main():
         "scoreboard": cmd_fix_scoreboard,
         "work-timeline": cmd_work_timeline,
         "qa": cmd_qa,
+        "claudemd-audit": cmd_claudemd_audit,
+        "mcp-audit": cmd_mcp_audit,
     }
 
     handler = commands.get(cmd)
