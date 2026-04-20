@@ -20,6 +20,9 @@ const SUBCOMMANDS = new Set([
   'sync-daemon',
   // v4.0.4 additions
   'version-check', 'peak-hours', 'resume-audit', 'variance',
+  // v4.0.7 additions
+  'subagent-audit', 'overhead-audit', 'compact-audit',
+  'fix-scoreboard', 'scoreboard',
 ]);
 
 const args = process.argv.slice(2);
@@ -89,6 +92,10 @@ function printHelp() {
   console.log('  burnctl audit [project]       JSONL waste-pattern audit');
   console.log('  burnctl resume-audit [days]   Detect cache-bust signals (5m TTL etc)');
   console.log('  burnctl variance [project]    Session cost variance profiler (CV)');
+  console.log('  burnctl subagent-audit        Subagent cost split + chain-depth');
+  console.log('  burnctl overhead-audit        Session startup overhead per project');
+  console.log('  burnctl compact-audit         Compaction rate per project');
+  console.log('  burnctl fix-scoreboard        Detect → fix → measure → prove loop');
   console.log('  burnctl fix start "desc" --project X    Start measurement');
   console.log('  burnctl fix result <id>       Show before/after delta');
   console.log('  burnctl scan                  Scan new sessions');

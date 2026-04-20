@@ -42,6 +42,18 @@ Commands:
   variance [project]
                 Session cost variance profiler. Shows CV per project +
                 root-cause diagnosis. Default: last 60 days.
+  subagent-audit [days]
+                Subagent cost attribution per project + chain-depth
+                detection (>3 subagents per parent). Default: 30 days.
+  overhead-audit [days]
+                Session startup overhead per project measured via
+                MAX(cache_creation_tokens). Default: 30 days.
+  compact-audit [days]
+                Compaction rate per project + multi-compaction
+                detection from JSONL. Default: 30 days.
+  fix-scoreboard / scoreboard
+                Detect → fix → measure → prove loop. Per-fix verdict
+                and aggregate tokens / monthly USD savings.
   fix start "desc" --project X
                 Snapshot current burn for project X, start a measurement
                 (requires 10+ sessions before result is meaningful)
@@ -1914,6 +1926,40 @@ def cmd_variance():
     run_variance(project)
 
 
+def _arg_days(default=30):
+    """Helper: parse `<cmd> <days>` from sys.argv, fall back to default."""
+    if len(sys.argv) >= 3:
+        try:
+            return int(sys.argv[2])
+        except ValueError:
+            return default
+    return default
+
+
+def cmd_subagent_audit():
+    """`burnctl subagent-audit [days]` — subagent cost + chain-depth."""
+    from subagent_audit import run_subagent_audit
+    run_subagent_audit(_arg_days(30))
+
+
+def cmd_overhead_audit():
+    """`burnctl overhead-audit [days]` — session startup overhead."""
+    from overhead_audit import run_overhead_audit
+    run_overhead_audit(_arg_days(30))
+
+
+def cmd_compact_audit():
+    """`burnctl compact-audit [days]` — compaction rate per project."""
+    from compact_audit import run_compact_audit
+    run_compact_audit(_arg_days(30))
+
+
+def cmd_fix_scoreboard():
+    """`burnctl fix-scoreboard` — detect → fix → measure → prove."""
+    from fix_scoreboard import run_fix_scoreboard
+    run_fix_scoreboard()
+
+
 def cmd_loops():
     """Detect retry-loop activity (5+ sessions in 10 min, avg gap < 60s)."""
     from burn_rate import detect_loops, resolve_db_path, DB_DEFAULT
@@ -2024,6 +2070,11 @@ def main():
         "peak-hours": cmd_peak_hours,
         "resume-audit": cmd_resume_audit,
         "variance": cmd_variance,
+        "subagent-audit": cmd_subagent_audit,
+        "overhead-audit": cmd_overhead_audit,
+        "compact-audit": cmd_compact_audit,
+        "fix-scoreboard": cmd_fix_scoreboard,
+        "scoreboard": cmd_fix_scoreboard,
     }
 
     handler = commands.get(cmd)
