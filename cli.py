@@ -1993,6 +1993,12 @@ def cmd_work_timeline():
     run_work_timeline(_parse_days(sys.argv))
 
 
+def cmd_qa():
+    """`burnctl qa` — run the daily QA suite, print summary, save reports."""
+    import daily_qa
+    daily_qa.main()
+
+
 def cmd_fix_apply():
     """`burnctl fix apply <fix_id>` — write the fix to CLAUDE.md."""
     from fix_apply import apply_fix
@@ -2128,6 +2134,7 @@ def main():
         "fix-scoreboard": cmd_fix_scoreboard,
         "scoreboard": cmd_fix_scoreboard,
         "work-timeline": cmd_work_timeline,
+        "qa": cmd_qa,
     }
 
     handler = commands.get(cmd)

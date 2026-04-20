@@ -45,6 +45,7 @@
     "claude_ai_tracker.py",
     "compact_audit.py",
     "config.py",
+    "daily_qa.py",
     "db.py",
     "fix_apply.py",
     "fix_generator.py",

@@ -25,6 +25,8 @@ const SUBCOMMANDS = new Set([
   'fix-scoreboard', 'scoreboard',
   // v4.0.9 additions
   'work-timeline',
+  // v4.0.11 additions
+  'qa',
 ]);
 
 const args = process.argv.slice(2);
@@ -99,6 +101,7 @@ function printHelp() {
   console.log('  burnctl compact-audit         Compaction rate per project');
   console.log('  burnctl fix-scoreboard        Detect → fix → measure → prove loop');
   console.log('  burnctl work-timeline [--days N]  Unified CC + browser work timeline');
+  console.log('  burnctl qa                    Daily QA suite — WOW/OK/DOD per command');
   console.log('  burnctl fix apply <id>        Append fix to CLAUDE.md, mark measuring');
   console.log('  burnctl fix start "desc" --project X    Start measurement');
   console.log('  burnctl fix result <id>       Show before/after delta');
