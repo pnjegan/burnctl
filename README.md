@@ -1,8 +1,24 @@
+<div align="center">
+
+<img src="logo.svg" alt="burnctl" width="300"><br><br>
+
 # burnctl
 
 **Real-time burn-rate monitor for Claude Code.**
+
 Tokens/min, $/hr, retry-loop detection, waste-pattern analysis — local-only,
 zero pip dependencies.
+
+[![npm version](https://img.shields.io/npm/v/burnctl.svg)](https://www.npmjs.com/package/burnctl)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Mac%20%7C%20Linux-lightgrey.svg)]()
+[![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)]()
+
+```
+npx burnctl@latest audit
+```
+
+</div>
 
 > Renamed and rebooted from `claudash` 3.x. Same engine; sharper focus.
 
@@ -24,8 +40,33 @@ parses sessions into a SQLite DB, and surfaces:
 - **5-hour rolling block** — observed token + cost totals (no quota guess; see note below)
 - **Retry-loop detection** — flags any project firing 5+ sessions in 10 min with avg gap < 60s
 - **Waste-pattern analysis** — repeated reads, stuck loops, late compactions, cost outliers (22 detectors)
+- **Subagent cost attribution** — which projects are spawning expensive background agents
+- **Session startup overhead** — tokens burned before you type a word (CLAUDE.md + MCP + tools)
+- **Peak hour drain** — Mon-Fri 13:00-19:00 UTC, session limits burn faster
 - **Fix tracker** — capture a baseline, apply a CLAUDE.md rule, re-measure outcomes
 - **Web dashboard** — http://localhost:8080 with charts + per-project breakdown
+
+> ccusage shows the score. burnctl changes it.
+
+---
+
+## Real numbers (from my own sessions)
+
+Verified from `data/usage.db` — not estimates:
+
+| Metric | Value |
+|---|---|
+| Sessions analyzed | 200 |
+| Retry loops found | 214 occurrences, 47,948 tokens |
+| Dead-end spirals | 30 occurrences, 30,000 tokens |
+| Subagent spend | 43% of total budget (invisible until now) |
+| Session overhead | 151,175 tokens before first message (grew 275% in 5 weeks) |
+| Sessions hitting compaction | 62% |
+| Fixes applied | 9 |
+| Fixes improving | 7 |
+| Monthly saving (verified) | $1,708 |
+
+---
 
 ### A note on rate-limit math
 
@@ -36,20 +77,23 @@ let you apply your own intuition.
 
 ---
 
-## vs ccusage
+## vs ccusage / claude-hud
 
-|                              | ccusage | burnctl |
-|------------------------------|:-------:|:-------:|
-| Token + cost reports         |   ✅    |   ✅    |
-| 5-hour block totals (observed) |   ✅    |   ✅    |
-| Live tokens/min + $/hr       |   ❌    |   ✅    |
-| Retry-loop detection         |   ❌    |   ✅    |
-| Web dashboard                |   ❌    |   ✅    |
-| Waste-pattern detection (22 rules) |   ❌    |   ✅    |
-| Fix tracker (before/after)   |   ❌    |   ✅    |
-| Statusline hook output       |   ❌    |   ✅    |
-| Inferred ETA to limit        |   —    |   —    |
+|                              | ccusage | claude-hud | burnctl |
+|------------------------------|:-------:|:----------:|:-------:|
+| Token + cost reports         |   ✅    |     —      |   ✅    |
+| 5-hour block totals (observed) |   ✅    |     —      |   ✅    |
+| Live tokens/min + $/hr       |   ❌    |     ✅     |   ✅    |
+| In-session context HUD       |   ❌    |     ✅     |   ❌    |
+| Retry-loop detection         |   ❌    |     ❌     |   ✅    |
+| Web dashboard                |   ❌    |     ❌     |   ✅    |
+| Waste-pattern detection (22 rules) |   ❌    |     ❌     |   ✅    |
+| Fix tracker (before/after)   |   ❌    |     ❌     |   ✅    |
+| Statusline hook output       |   ❌    |     ❌     |   ✅    |
+| Inferred ETA to limit        |   —    |     —      |   —    |
 
+ccusage is the scoreboard. claude-hud is the real-time in-session context
+monitor. burnctl is the post-session intelligence and fix layer.
 (Neither tool can show a real ETA-to-limit because Anthropic does not publish the limit. ccusage estimates it; we don't.)
 
 ---
@@ -98,23 +142,50 @@ stored in:
 
 ---
 
-## Common commands
+## Commands
+
+### No setup required (work immediately)
+
+```bash
+burnctl audit [proj]    # JSONL waste-pattern audit (loops, dead-ends, rereads)
+burnctl peak-hours      # Mon-Fri 13:00-19:00 UTC peak status (drain context)
+burnctl version-check   # flag known-bad Claude Code versions (2.1.69-2.1.89)
+burnctl resume-audit    # detect cache-bust signals (5m TTL, low hit rate)
+```
+
+### Requires scan first (`burnctl scan` from your project dir)
 
 ```bash
 burnctl dashboard       # web UI on http://localhost:8080
 burnctl burnrate        # tokens/min, $/min, $/hr (last 5 min)
 burnctl loops           # show retry-loop activity in last 10 min
 burnctl block           # 5-hour rolling block totals
-burnctl peak-hours      # Mon-Fri 13:00-19:00 UTC peak status (drain context)
-burnctl version-check   # flag known-bad Claude Code versions (2.1.69-2.1.89)
-burnctl audit [proj]    # JSONL waste-pattern audit (loops, dead-ends, rereads)
-burnctl resume-audit    # detect cache-bust signals (5m TTL, low hit rate)
+burnctl subagent-audit  # subagent cost split per project
+burnctl overhead-audit  # session startup overhead trend
+burnctl compact-audit   # compaction rate per project
 burnctl variance [proj] # per-project cost variance with root-cause diagnosis
 burnctl statusline      # one-line output for Claude Code statusline hook
 burnctl scan            # one-shot scan of new JSONL sessions
 burnctl waste           # waste-pattern detector summary
-burnctl fixes           # list recorded fixes + verdict
 burnctl backup          # hot-copy DB + JSON fixes export
+```
+
+### The fix loop
+
+```bash
+burnctl fix apply 3     # auto-write fix to ~/.claude/CLAUDE.md (confirm with y)
+burnctl measure --auto  # measure all pending fixes
+burnctl fixes           # list recorded fixes + verdict
+burnctl fix-scoreboard  # full ROI proof — tokens saved, monthly saving
+```
+
+Closed loop, no copy-paste:
+
+```
+burnctl audit          → finds waste in your sessions
+burnctl fix apply 3    → writes CLAUDE.md rule automatically
+[work normally 2-3 days]
+burnctl fix-scoreboard → shows impact, tokens saved, monthly saving
 ```
 
 Full command list: `burnctl --help`.
@@ -194,11 +265,31 @@ cd burnctl
 python3 cli.py dashboard   # no install needed
 ```
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for full guidelines.
+
+---
+
+## Sources and attribution
+
+Peak hour timing (Mon-Fri 13:00-19:00 UTC):
+Thariq Shihipar (Anthropic), X post March 26 2026, confirmed by GitHub issue #41930
+
+Bad version range (v2.1.69-v2.1.89):
+GitHub issues #34629, #38335, #42749. Safe target: v2.1.91+
+
+Cache TTL regression:
+github.com/cnighswonger/claude-code-cache-fix, GitHub issue #46829
+
+250K wasted API calls/day from retry loops:
+Anthropic internal data, Claude Code source (autoCompact.ts, March 2026)
+
 ---
 
 ## License
 
 MIT — fork it, ship it, build on it.
+
+Built by [pnjegan](https://github.com/pnjegan).
 
 ---
 

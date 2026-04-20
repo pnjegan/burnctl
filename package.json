@@ -1,7 +1,7 @@
 {
   "name": "burnctl",
   "version": "4.0.8",
-  "description": "Real-time AI burn rate monitor for Claude Code. Tokens/min, cost/hr, retry-loop detection, waste pattern analysis. Local-only, zero pip deps.",
+  "description": "AI burn rate monitor for Claude Code. Finds waste patterns, generates CLAUDE.md fixes, measures impact. Local-only, zero pip deps.",
   "bin": {
     "burnctl": "./bin/burnctl.js"
   },
@@ -18,7 +18,10 @@
     "rate-limit",
     "developer-tools",
     "cli",
-    "dashboard"
+    "dashboard",
+    "jsonl",
+    "waste-detection",
+    "claude-md"
   ],
   "author": "Jegan Nagarajan",
   "license": "MIT",

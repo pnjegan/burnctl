@@ -1,31 +1,39 @@
 # Contributing to burnctl
 
-## Reporting bugs
+burnctl is actively maintained. Contributions welcome.
 
-Open an issue with:
-- Your OS and Python version
-- Steps to reproduce
-- Expected vs actual behavior
+## Before opening a PR
 
-## Known limitations (v1.0)
+- Run the audit on your own sessions first: `npx burnctl@latest audit`
+- Check that your change doesn't break the fresh-install test:
+  ```bash
+  cd /tmp && rm -rf bc-test && mkdir bc-test && cd bc-test
+  npx burnctl@latest audit
+  ```
 
-- Browser tracking: macOS cookie sync only (oauth_sync.py works on all platforms)
-- Single-user: no multi-user auth
-- Performance: designed for <50K sessions
+## What we need most
 
-## Roadmap (v1.1)
+- Bug reports with JSONL schema details (Claude Code version + actual field names)
+- Fixes to waste pattern detection accuracy
+- Platform testing on different macOS versions
+- Native Windows support (without WSL2)
+- More waste-pattern detectors
+- Statusline output formats for other shells / editors
 
-- Linux browser tracking
-- Performance caching layer
-- MCP server — verified working
-- Interactive session drilldown
+## What we're not building yet
+
+- Windows native support (WSL2 only for now)
+- Team / multi-user features
+- Cloud sync or accounts
+
+Open an issue before starting large features.
 
 ## Development setup
 
 ```bash
 git clone https://github.com/pnjegan/burnctl
 cd burnctl
-python3 cli.py dashboard  # zero deps, just run it
+python3 cli.py dashboard   # zero deps, just run it
 ```
 
 ## Code style
@@ -33,3 +41,11 @@ python3 cli.py dashboard  # zero deps, just run it
 - Python 3.8+ stdlib only — no pip dependencies
 - Type hints encouraged but not required
 - Debug logs prefixed with `[module_name]`
+
+## Reporting bugs
+
+Use the bug report template at `.github/ISSUE_TEMPLATE/bug_report.md`. Include:
+- Your OS and Python version
+- Claude Code version (`claude --version`)
+- Steps to reproduce from a fresh `/tmp` directory
+- Expected vs actual output
