@@ -830,9 +830,45 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 ).fetchone()[0]
             finally:
                 conn.close()
+
+            # v4.3.0: augment with session summary + cost estimates.
+            # Fail-safe — if browser_sessions module errors, the endpoint
+            # still returns the raw snapshot data (no regression).
+            session_summary = {}
+            combined_cost = None
+            granularity_note = None
+            try:
+                from browser_sessions import get_browser_summary
+                summary = get_browser_summary()
+                for aid, data in (summary.get("accounts") or {}).items():
+                    session_summary[aid] = {
+                        "sessions_today": data.get("sessions_today", 0),
+                        "avg_duration_min": data.get("avg_duration_min", 0),
+                        "longest_session_min": data.get("longest_session_min", 0),
+                        "long_sessions_today": data.get("long_sessions_today", 0),
+                        "cost_est_today": data.get("total_cost_est_today", 0),
+                        "cost_est_week": data.get("total_cost_est_week", 0),
+                        "flagged": data.get("flagged", False),
+                        "thin_data": data.get("thin_data", True),
+                    }
+                combined = summary.get("combined") or {}
+                combined_cost = {
+                    "browser_cost_today": combined.get("browser_cost_today", 0),
+                    "browser_cost_week": combined.get("browser_cost_week", 0),
+                    "cc_cost_week": combined.get("cc_cost_week", 0),
+                    "browser_pct_of_total": combined.get("browser_pct_of_total", 0),
+                    "window_note": combined.get("window_note"),
+                }
+                granularity_note = summary.get("granularity_note")
+            except Exception:
+                pass
+
             self._serve_json({
                 "accounts": [dict(r) for r in rows],
                 "last_sync": last,
+                "session_summary": session_summary,
+                "combined_cost_est": combined_cost,
+                "granularity_note": granularity_note,
             })
 
         elif path == "/api/context-rot":

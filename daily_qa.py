@@ -284,6 +284,55 @@ def score_api_projects(status, body):
 # Test plan
 # ─────────────────────────────────────────────────────────
 
+def check_browser_session_health():
+    """v4.3.0 check 18 — browser session patterns (local, no npx/curl).
+
+    Scoring (per published spec):
+      WOW: avg session < 30 min AND no session > 60 min
+      OK:  avg 30-60 min OR one session > 60 min OR thin data
+      DOD: avg > 60 min OR any session > 2h today
+
+    On thin data (<3 sessions): OK, not DOD. Matches truth-first rule —
+    don't claim WOW we can't back up, don't page on DOD for no data.
+    """
+    try:
+        from browser_sessions import get_browser_summary
+    except ImportError as e:
+        return OK, f"browser_sessions import failed: {e}"
+
+    try:
+        summary = get_browser_summary(days=1)
+    except Exception as e:
+        return DOD, f"get_browser_summary crashed: {e}"
+
+    accounts = (summary or {}).get("accounts") or {}
+    if not accounts or summary.get("thin_data"):
+        return OK, "browser data collecting (<3 sessions or no snapshots)"
+
+    dod_issues = []
+    avg_max = 0.0
+    long_today_any = False
+    for aid, data in accounts.items():
+        if data.get("thin_data"):
+            continue
+        longest = data.get("longest_session_min", 0) or 0
+        avg = data.get("avg_duration_min", 0) or 0
+        if longest > 120:
+            dod_issues.append(f"{aid}: {longest}min session today (>2hr)")
+        if avg > 60:
+            dod_issues.append(f"{aid}: avg {avg}min (>60min avg)")
+        if longest > 60:
+            long_today_any = True
+        if avg > avg_max:
+            avg_max = avg
+
+    if dod_issues:
+        return DOD, "; ".join(dod_issues)
+    if avg_max > 30 or long_today_any:
+        return OK, f"avg session {avg_max:.0f}min, longest>60min={long_today_any}"
+    return WOW, f"avg session {avg_max:.0f}min — healthy"
+
+
 TESTS = [
     # npx commands — run from fresh /tmp
     ("audit",            "npx",  "audit",                 score_audit),
@@ -341,6 +390,21 @@ def run_all_tests():
         qa_tmp.rmdir()
     except OSError:
         pass
+
+    # v4.3.0 check 18 — browser session health (in-process, not npx/curl)
+    t0 = time.monotonic()
+    status, evidence = check_browser_session_health()
+    results.append({
+        "name": "browser-session-health",
+        "kind": "local",
+        "arg": "browser_sessions.get_browser_summary",
+        "status": status,
+        "evidence": evidence,
+        "exit_code": 0 if status != DOD else 2,
+        "elapsed_sec": round(time.monotonic() - t0, 2),
+        "output_head": evidence[:500],
+    })
+
     return results
 
 
@@ -670,7 +734,7 @@ def main():
     prior_path = QA_DIR / "latest.md"
     prior = load_prior_results(prior_path)
 
-    print("burnctl daily_qa — running 14 checks...")
+    print(f"burnctl daily_qa — running {len(TESTS) + 1} checks...")
     results = run_all_tests()
     local_metrics = capture_local_metrics()
     trend_kv = extract_report_metrics(results, local_metrics)

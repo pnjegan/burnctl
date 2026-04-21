@@ -294,6 +294,109 @@ def _resolve_fix_id(conn):
     return row[0] if row else None
 
 
+ACCOUNT_LABELS = {
+    "personal_max": "Max (personal_max)",
+    "work_pro": "Pro (work_pro)",
+}
+
+
+def _fmt_duration(mins):
+    if mins is None:
+        return "0min"
+    mins = int(round(mins))
+    if mins < 60:
+        return f"{mins}min"
+    h = mins // 60
+    m = mins % 60
+    return f"{h}h {m:02d}m" if m else f"{h}h"
+
+
+def _render_browser_health():
+    """Print the v4.3.0 'Browser Session Health' section. Silent on error."""
+    try:
+        from browser_sessions import get_browser_summary
+    except ImportError:
+        return
+
+    try:
+        summary = get_browser_summary()
+    except Exception:
+        return
+
+    accounts = summary.get("accounts") or {}
+    combined = summary.get("combined") or {}
+
+    print()
+    print(" === Browser Session Health ===")
+
+    if not accounts:
+        print(" Browser session data: collecting... (no snapshots yet)")
+        return
+
+    # Thin-data guard per-account: if ANY account has < 3 sessions, mark it
+    # collecting rather than printing dubious numbers.
+    for aid, data in accounts.items():
+        label = ACCOUNT_LABELS.get(aid, aid)
+        print(f" Account: {label}")
+        if data.get("thin_data"):
+            print(
+                f"   Browser session data: collecting... "
+                f"(need 3+ sessions for analysis, have {data['sessions_today'] + 0})"
+            )
+            print()
+            continue
+
+        if data["flagged"]:
+            badge = "⚠️ flagged"
+        elif data["longest_session_min"] > LONG_BROWSER_SESSION_MIN:
+            badge = "⚠️ long"
+        else:
+            badge = "✅ healthy"
+        print(
+            f"   Today:     {data['sessions_today']} sessions  "
+            f"avg {_fmt_duration(data['avg_duration_min'])}  "
+            f"longest {_fmt_duration(data['longest_session_min'])}  {badge}"
+        )
+        print(
+            f"   Est. cost today: ~${data['total_cost_est_today']:.2f}"
+            f"  |  This week: ~${data['total_cost_est_week']:.2f}"
+        )
+
+        if data["longest_session_min"] > LONG_BROWSER_SESSION_MIN:
+            print()
+            print(
+                f"   ⚠️  Long session detected "
+                f"({_fmt_duration(data['longest_session_min'])})"
+            )
+            print("   Every message re-reads entire conversation history.")
+            print("   Estimated 3-5x cost vs 30-min focused sessions.")
+            print("   → Start fresh conversation when switching tasks.")
+        print()
+
+    # Combined cost comparison
+    b_week = combined.get("browser_cost_week", 0)
+    cc_week = combined.get("cc_cost_week", 0)
+    total_week = b_week + cc_week
+    if total_week > 0:
+        b_pct = b_week / total_week * 100
+        cc_pct = cc_week / total_week * 100
+        print(" Combined this week:")
+        print(f"   Browser:     ~${b_week:>7.2f}  ({b_pct:.0f}%)")
+        print(f"   Claude Code: ~${cc_week:>7.2f}  ({cc_pct:.0f}%)")
+        print(f"   " + "─" * 25)
+        print(f"   Total est.:  ~${total_week:>7.2f}")
+        print()
+        if combined.get("window_note"):
+            print(f"   Note: {combined['window_note']}")
+        print(" Note: Browser costs are estimates from window % deltas.")
+        print(" Claude Code costs are exact from JSONL session data.")
+        if summary.get("granularity_note"):
+            print(f" {summary['granularity_note']}")
+
+
+LONG_BROWSER_SESSION_MIN = 60
+
+
 def render(reveal=False):
     conn = load_db()
     if conn is None:
@@ -398,6 +501,9 @@ def render(reveal=False):
         print(" → Long session without /compact — Claude forgot what it read")
         print(" → 5-min cache TTL — cache busting on every short break")
         print(" → Sub-agent spawning same context repeatedly")
+
+    # Browser session health (v4.3.0)
+    _render_browser_health()
 
     # Fix options
     print()

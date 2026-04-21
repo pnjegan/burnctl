@@ -101,6 +101,49 @@ COMPLIANCE_TEMPLATES = {
     },
 }
 
+# v4.3.0: browser-specific patterns from claude_ai_snapshots.
+# These are claude.ai browser usage, distinct from Claude Code JSONL.
+BROWSER_TEMPLATES = {
+    "long_session": {
+        "heading": "Stop long browser sessions",
+        "context": "This is a claude.ai browser pattern, not Claude Code.",
+        "lines": [
+            "Long sessions cost 3-5x more per answer because every",
+            "message re-reads the entire conversation history.",
+            "",
+            "Rule: Start a new claude.ai conversation when:",
+            "- You switch to a different task",
+            "- A session reaches 30 minutes",
+            "- You've pasted more than 3 large outputs",
+        ],
+    },
+    "fragmented_topic": {
+        "heading": "Avoid fragmented topic sessions",
+        "context": "This is a claude.ai browser pattern, not Claude Code.",
+        "lines": [
+            "Multiple short sessions on the same topic cost more",
+            "than one focused session — each new chat loses context",
+            "and rebuilds it from scratch.",
+            "",
+            "Rule: For ongoing work, continue in the same conversation.",
+            "Only start fresh when genuinely switching topics.",
+        ],
+    },
+    "consecutive_peak": {
+        "heading": "Reset context between back-to-back sessions",
+        "context": "This is a claude.ai browser pattern, not Claude Code.",
+        "lines": [
+            "Sessions starting <10 min after another often carry",
+            "residual context from the previous task — re-reads and",
+            "partial re-summarisation bill at full input rate.",
+            "",
+            "Rule: When you start a new task within 10 min of ending",
+            "another, open a fresh conversation — don't re-use the",
+            "previous tab.",
+        ],
+    },
+}
+
 
 # ─── Aggregates ──────────────────────────────────────────────────
 
@@ -141,6 +184,32 @@ def _compliance_aggregates(conn):
     return {pid: {"violations": int(n)} for pid, n in cur.fetchall()}
 
 
+def _browser_aggregates(db_path=None):
+    """Return {pattern_type: {"count": n, "cost": $}} for browser patterns.
+
+    Browser patterns come from claude_ai_snapshots via the in-memory
+    browser_sessions.get_waste_patterns() helper — no DB writes.
+    """
+    try:
+        from browser_sessions import get_waste_patterns
+    except ImportError:
+        return {}
+    try:
+        patterns = get_waste_patterns(db_path=db_path)
+    except Exception:
+        return {}
+
+    out = {}
+    for p in patterns:
+        pt = p.get("pattern_type")
+        if not pt:
+            continue
+        row = out.setdefault(pt, {"count": 0, "cost": 0.0})
+        row["count"] += 1
+        row["cost"] += float(p.get("cost_est_usd") or 0)
+    return out
+
+
 def _monthly_estimate(cost, days):
     """(cost over window) / days * 30. Clamp small windows."""
     if cost <= 0 or days <= 0:
@@ -170,9 +239,14 @@ def generate_claude_md_rules(db_path=None):
     compliance = _compliance_aggregates(conn)
     conn.close()
 
-    if not waste and not compliance:
+    # v4.3.0 browser patterns (read from claude_ai_snapshots via in-memory
+    # detector — separate data source, no DB writes, safe to fail silently).
+    browser = _browser_aggregates(db_path)
+
+    if not waste and not compliance and not browser:
         return (
-            "burnctl fix-rules — no waste_events or compliance violations in DB.\n"
+            "burnctl fix-rules — no waste_events, compliance violations, or\n"
+            "browser session patterns in DB.\n"
             "Either your usage is already clean, or scan hasn't run yet.\n"
         )
 
@@ -183,6 +257,8 @@ def generate_claude_md_rules(db_path=None):
     lines.append(bar)
     lines.append(f"burnctl fix-rules — {today}")
     lines.append("Generated from YOUR real waste data (not generic advice)")
+    if browser:
+        lines.append("Includes browser session patterns from claude_ai_snapshots")
     lines.append(bar)
     lines.append("")
 
@@ -237,6 +313,22 @@ def generate_claude_md_rules(db_path=None):
         lines.append(
             f"### {tmpl['heading']} ({pid} — {stats['violations']} violations)"
         )
+        lines.extend(tmpl["lines"])
+        lines.append("")
+
+    # Browser session patterns (v4.3.0). Sorted by detected cost, descending.
+    # Cost labelled "detected" — not monthly — because browser data window
+    # is <7 days on first runs and we don't extrapolate thin data.
+    for pt, stats in sorted(browser.items(), key=lambda kv: kv[1]["cost"], reverse=True):
+        if pt not in BROWSER_TEMPLATES:
+            continue
+        tmpl = BROWSER_TEMPLATES[pt]
+        cost_tag = f", ~{_fmt_usd(stats['cost'])} detected (est.)" if stats["cost"] > 0 else ""
+        lines.append(
+            f"### {tmpl['heading']} ({pt} — {stats['count']} detected{cost_tag})"
+        )
+        lines.append(tmpl["context"])
+        lines.append("")
         lines.extend(tmpl["lines"])
         lines.append("")
 
