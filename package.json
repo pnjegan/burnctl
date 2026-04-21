@@ -52,6 +52,7 @@
     "fix_apply.py",
     "fix_generator.py",
     "fix_measurement.py",
+    "fix_rules.py",
     "fix_scoreboard.py",
     "fix_tracker.py",
     "insights.py",

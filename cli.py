@@ -85,6 +85,8 @@ Commands:
   fix generate <waste_event_id>
                 (v2) Generate a CLAUDE.md rule via Anthropic API and save
                 it as a `proposed` fix. Requires anthropic_api_key setting.
+  fix-rules     Emit a CLAUDE.md rules block from your real waste_events
+                + compliance_events. Deterministic, offline, paste-ready.
   measure <id>  Capture current metrics for a fix, compute delta, print
                 a plan-aware verdict and share card
   mcp           Print MCP server settings.json snippet + run a quick test
@@ -2017,6 +2019,22 @@ def cmd_why_limit():
     sys.exit(why_limit_main())
 
 
+def cmd_fix_rules():
+    """`burnctl fix-rules` — emit a CLAUDE.md rules block from real waste data."""
+    from fix_rules import generate_claude_md_rules
+    output = generate_claude_md_rules()
+    print(output)
+
+    outfile = "generated-claude-rules.txt"
+    try:
+        with open(outfile, "w") as f:
+            f.write(output)
+        print(f"Saved to {outfile}")
+        print("Review, then paste into your CLAUDE.md")
+    except OSError as e:
+        print(f"(Could not write {outfile}: {e})")
+
+
 def cmd_fix_apply():
     """`burnctl fix apply <fix_id>` — write the fix to CLAUDE.md."""
     from fix_apply import apply_fix
@@ -2156,6 +2174,7 @@ def main():
         "claudemd-audit": cmd_claudemd_audit,
         "mcp-audit": cmd_mcp_audit,
         "why-limit": cmd_why_limit,
+        "fix-rules": cmd_fix_rules,
     }
 
     handler = commands.get(cmd)

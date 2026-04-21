@@ -56,6 +56,9 @@ research-reports/
 audit-reports/
 checklists/
 
+# ── fix-rules output (project-specific data, never push) ──
+generated-claude-rules.txt
+
 # Internal docs — never push to GitHub (permanent rule)
 BURNCTL_MASTER_DOC*.md
 CLAUDE.md
