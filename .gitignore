@@ -59,6 +59,59 @@ checklists/
 # ── fix-rules output (project-specific data, never push) ──
 generated-claude-rules.txt
 
+# ── Session summaries + handoffs (operator-only, never push) ──
+session-*.txt
+session-*-summary.txt
+session-*-handoff.md
+session-*-handoff.txt
+SESSION_*.md
+SESSION_*.txt
+
+# ── Operator notes + scratchpads (never push) ──
+NOTES.md
+NOTES.txt
+*-notes.txt
+notes/
+scratch/
+scratchpad/
+SCRATCH.md
+SCRATCH.txt
+
+# ── Teaching / tutorial / lesson drafts (operator-only) ──
+teaching-*.md
+teaching-*.txt
+tutorial-*.md
+tutorial-*.txt
+lesson-*.md
+lesson-*.txt
+learnings/
+
+# ── Drafts (operator-only) ──
+*-draft.md
+*-draft.txt
+draft-*.md
+draft-*.txt
+drafts/
+
+# ── Briefings + handoffs (operator-only) ──
+brief-*.md
+brief-*.txt
+briefing-*.md
+briefing-*.txt
+handoff-*.md
+handoff-*.txt
+
+# ── Local TODOs (operator-only; FIXES_TODO.md rule is separate) ──
+TODO.txt
+*-todo.txt
+todos/
+
+# ── Plan docs (operator-only) ──
+plan-*.md
+plan-*.txt
+PLAN.md
+PLAN.txt
+
 # Internal docs — never push to GitHub (permanent rule)
 BURNCTL_MASTER_DOC*.md
 CLAUDE.md
