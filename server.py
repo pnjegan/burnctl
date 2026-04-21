@@ -765,6 +765,76 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "compact_instruction": instr,
             })
 
+        # v4.2.2: restore claudash v3.x JSON surface for waste / subagents /
+        # browser-windows. CLI commands for each of these already exist —
+        # these endpoints are the dashboard / script-consumer surface.
+        elif path == "/api/waste":
+            conn = get_conn()
+            try:
+                rows = conn.execute(
+                    """SELECT pattern_type, severity, session_id, project,
+                              token_cost, detected_at, detail_json
+                       FROM waste_events
+                       ORDER BY detected_at DESC
+                       LIMIT 100"""
+                ).fetchall()
+                total = conn.execute(
+                    "SELECT COUNT(*) FROM waste_events"
+                ).fetchone()[0]
+                total_cost = conn.execute(
+                    "SELECT COALESCE(SUM(token_cost), 0) FROM waste_events"
+                ).fetchone()[0]
+            finally:
+                conn.close()
+            self._serve_json({
+                "waste_events": [dict(r) for r in rows],
+                "total": total or 0,
+                "total_cost_est": round(total_cost or 0, 2),
+            })
+
+        elif path == "/api/subagents":
+            conn = get_conn()
+            try:
+                rows = conn.execute(
+                    """SELECT session_id, project, is_subagent, cost_usd,
+                              input_tokens, output_tokens, timestamp
+                       FROM sessions
+                       WHERE is_subagent = 1
+                       ORDER BY timestamp DESC
+                       LIMIT 100"""
+                ).fetchall()
+                agg = conn.execute(
+                    "SELECT COUNT(*), COALESCE(SUM(cost_usd), 0) "
+                    "FROM sessions WHERE is_subagent = 1"
+                ).fetchone()
+            finally:
+                conn.close()
+            self._serve_json({
+                "subagent_sessions": [dict(r) for r in rows],
+                "total": agg[0] or 0,
+                "total_cost": round(agg[1] or 0, 2),
+            })
+
+        elif path == "/api/browser-windows":
+            conn = get_conn()
+            try:
+                rows = conn.execute(
+                    """SELECT account_id, pct_used, tokens_used,
+                              tokens_limit, polled_at
+                       FROM claude_ai_snapshots
+                       ORDER BY polled_at DESC
+                       LIMIT 10"""
+                ).fetchall()
+                last = conn.execute(
+                    "SELECT MAX(polled_at) FROM claude_ai_snapshots"
+                ).fetchone()[0]
+            finally:
+                conn.close()
+            self._serve_json({
+                "accounts": [dict(r) for r in rows],
+                "last_sync": last,
+            })
+
         elif path == "/api/context-rot":
             project = params.get("project", [None])[0]
             days_raw = params.get("days", ["30"])[0]

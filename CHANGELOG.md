@@ -1,5 +1,26 @@
 # burnctl — Changelog (continued from claudash v3.x)
 
+## [2026-04-21] Session 32 — v4.2.2 — restore 3 JSON endpoints (claudash-parity)
+
+### Fixed
+- **`/api/waste` (200 JSON)** — returns up to 100 most-recent `waste_events` with `pattern_type`, `severity`, `session_id`, `project`, `token_cost`, `detected_at`, `detail_json`, plus aggregate `total` and `total_cost_est`. Closes a 404 gap present since the v4.0 rebrand.
+- **`/api/subagents` (200 JSON)** — returns up to 100 most-recent `is_subagent=1` rows with `session_id`, `project`, cost, tokens, and timestamp, plus aggregate `total` and `total_cost`. Data was already surfaced by the `subagent-audit` CLI; this adds the dashboard-consumer surface.
+- **`/api/browser-windows` (200 JSON)** — returns the 10 most-recent `claude_ai_snapshots` rows (one per account/poll) with `account_id`, `pct_used`, `tokens_used`, `tokens_limit`, `polled_at`, plus `last_sync` timestamp. Shape matches the `work-timeline` inputs.
+
+All three endpoints use the standard `self._serve_json(dict)` pattern, read-only, no new imports, localhost-only (server already binds `127.0.0.1`).
+
+### Verified (no-op closures from the parity audit)
+- **`/api/real-story` and `/api/realstory`** — both already registered in v4.2.1 (`server.py:430, 443`), both return 200 JSON with distinct shapes. The dashboard calls the hyphenated path. No alias work needed.
+- **`/api/fixes/N/share-card`** — route registered in v4.2.1 (`server.py:642`). Live-probed with fix ids 14, 11, 12, 5 — all return 200 text/plain share-cards (text by design, not JSON). The Block-2 404 on id=1 was correct "fix not found" for a non-existent id.
+
+### Deferred to v4.3.0 (scope control, explicitly flagged here)
+- **Combined browser + Claude Code timeline tab in dashboard.** Claudash v3.x had a dedicated UI tab; v4 replaced it with the `work-timeline` CLI. Adding a proper content tab requires ~90-120 min of tab-infrastructure work (the v4 dashboard is single-scroll sections, not tabs), over the 45-min budget for this patch. Decision for v4.3.0: revive the UI tab OR promote CLI as the official form-factor and retire the gap.
+- **`skill_usage` writer.** Table schema exists (`id, session_id, project, skill_name, detected_at, invoked, tokens_estimated`), 0 rows. No writer wired into scanner yet.
+- **`generated_hooks` pipeline.** Table schema exists, 0 rows. Compliance detector sees high-severity violations (4 in live data) but never sets `auto_fix_available=1` or generates a hook.
+
+### QA
+- 17 / 17 WOW · 0 OK · 0 DOD · no regressions on the pre-publish gate. Trend block: `api_stats_cost_usd=10,090.02`, `api_stats_total_turns=25,026`, `fix_monthly_savings_usd=1,708.52`.
+
 ## [2026-04-21] Session 31 — v4.2.1 — post-publish rename + compaction-numbers refresh
 
 ### Fixed
