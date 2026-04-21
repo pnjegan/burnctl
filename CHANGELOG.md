@@ -1,5 +1,40 @@
 # burnctl — Changelog (continued from claudash v3.x)
 
+## [2026-04-21] Session 31 — v4.2.1 — post-publish rename + compaction-numbers refresh
+
+### Fixed
+- **`effective_window_pct` renamed to `waste_free_ratio`** throughout `fix_tracker.py` and `cli.py` (audit finding C5, deferred from V2 doc pass). The old name implied Anthropic-window utilisation; the metric is actually `(total_tokens − attributed_waste) / total_tokens × 100`. Reads stay backward-compatible: every call site that used to read `effective_window_pct` now tries `waste_free_ratio` first and falls back, so historical `baseline_json` / `delta_json` rows continue to render.
+- **V2 doc Part 7 compaction numbers regenerated** after the v4.2.0 sub-agent compaction-detector fix. Pre-fix figure was 47 / 80 distinct sessions (121 events) — silently included sub-agent files. Post-fix (main-agent only): 22 / 51 (43 events). Footnote explains the gap and notes that historical rows keep `compaction_detected=1` until `scan --reprocess` is run.
+
+### Docs
+- V2 doc corrections-log updated with the rename and the regenerated compaction numbers. V1 unchanged.
+
+## [2026-04-21] Session 31 — v4.2.0 — `why-limit`, inferred_project, repeated-reads hook, audit-honesty pass
+
+### Added
+- **`burnctl why-limit`** — single-screen 5-hour window explainer. Token total, per-project split (main + sub-agents), repeated_reads events in the window, specific filenames re-read with per-file token estimates, root-cause guesses, three concrete fix commands. Private project names masked as `Project 1 / Project 2` by default (`--reveal` for local use). Files: `why_limit.py` (new, 419 lines); dispatch in `cli.py`, SUBCOMMANDS + help in `bin/burnctl.js`, files allowlist in `package.json`.
+- **`inferred_project` column on sessions** — scanner peeks at the first 10 Read/Write tool-call paths in a JSONL when `resolve_project()` returns UNKNOWN_PROJECT, extracts the first non-system top-level dir, stores it as `inferred_project`. Audit commands now read via `COALESCE(NULLIF(TRIM(inferred_project),''), project)` so "Other" sessions get a best-effort label. Files: `scanner.py` (+99), `db.py` migration + `insert_session`, `subagent_audit.py`, `overhead_audit.py`.
+- **PostToolUse hook — `tools/hooks/prevent_repeated_reads.py`** — non-blocking warning on Read re-reads within a session. Caches per-session at `/tmp/burnctl-reads-<SID>.json`; 24-h cleanup on startup. `SESSION_ID` from `$CLAUDE_SESSION_ID` env var with date fallback. Install recipe in `CLAUDE.md`.
+- **`.burnctlignore` loader in `daily_qa.py`** — `has_maintainer_leak()` now loads substrings from `.burnctlignore` next to the script if present, falls back to the hardcoded three-string list otherwise. Portable across other users of burnctl.
+
+### Fixed
+- **Sub-agent compaction false positives** — `scanner._flush()` now short-circuits `_detect_compaction()` when the file's `is_subagent=1`. Sub-agent files no longer get `compaction_detected=1`. Brainworks session `fb516355…` previously showed 13 "compactions" — all sub-agent noise.
+- **`_pct_change` clamp `[-100 %, +500 %]`** — `fix_tracker.py`. Tiny baselines (n=1 waste events, n=1 session) produced inflated percentages that distorted verdict display. Added `is_anomalous_pct_change()` helper so callers can mark clamped values.
+- **cost_outlier minimum-sample guard** — `waste_patterns.py` now requires `COUNT(DISTINCT session_id) >= 10` per project before any cost_outlier event fires. Retires the "Other with 4 sessions already firing" false-positive mine.
+- **`_input_hash` docstring corrected** — V1 said identical-input retries were exempt from flagging; the truth is the opposite (density-based detection groups identical hashes and flags dense runs). Documented honestly. Known precision gaps (whitespace, key-order, 200-char truncation) listed in the docstring.
+
+### Documentation
+- (internal audit + doc pass — not in repo)
+- `CLAUDE.md` hook install recipe added (local file only; not in repo)
+
+### QA
+- daily_qa.py now runs 17 checks (added `why-limit` smoke test). On v4.1.0 the new check scores OK (pending publish) per the `score_smoke` catch-22 guard; on v4.2.0 it should promote to WOW. Post-publish run expected: 17/17 WOW.
+
+### Known limitations carried forward
+- Sub-agent `session_id` collision (scanner ingests parent UUID as sub-agent session_id) — still not fixed; DB migration required. Tracked.
+- `_input_hash` whitespace + key-order sensitivity — documented, not fixed.
+- `peak_hour.py` wall-clock heuristic not reading Claude Code v2.1.80+ `rate_limits.five_hour` stdin JSON — documented, not fixed.
+
 ## [2026-04-14] Session 9 — Reliability, npm package live, version 1.0.11 published
 
 ### Fixed
@@ -1688,3 +1723,112 @@ Negative findings (clean):
 
 ### Shipped
 - Commit `2cf8800` pushed to `origin/main` (6 files, +204/-37). GitHub page ready for LinkedIn post.
+
+---
+
+## [2026-04-20] Session 30 — work-timeline, QA pipeline, daily_qa suite, trend, 5 dashboard bugs, 2 audit commands (v4.0.9 → v4.1.0)
+
+Note: previous Session 28 entry in this log covers README/logo work from earlier in the same conversation. This entry covers everything that followed.
+
+### Added
+- **work-timeline command** — unified CC + browser work pattern intelligence. Joins `claude_ai_snapshots` with `sessions.session_id` turn bursts; honest about ±5min polling precision. Handles sparse browser data gracefully. Fresh-install guard added post-hoc (see Fixed BUG-1).
+  Files: `work_timeline.py` (new), `cli.py`, `bin/burnctl.js`, `package.json`. Commit 832587e. Shipped v4.0.9.
+
+- **QA pipeline — 4 subagents** at `~/.claude/agents/`:
+  - `burnctl-tester` (read-only, tests from fresh /tmp via npx; reports PASS/FAIL)
+  - `burnctl-fixer` (one-bug-at-a-time with per-fix verify)
+  - `burnctl-reviewer` (diff-only; APPROVE/BLOCK gate)
+  - `burnctl-schema-guard` (column-drift detector; maintains `docs/schema.md`)
+  Separation of concerns enforced by tool allowlists (tester can't Edit, reviewer can't run CLI, etc.).
+  Files: 4 agent `.md` files, CLAUDE.md "QA Pipeline" directive block added.
+
+- **schema.md** — canonical column reference with a frozen drift catalog (token_cost/start_time/waste_type/fix_id/browser_activity → right names). 150 lines. Prevents the spec-drift bugs flagged in the QA cycle audit from recurring.
+  Files: `schema.md` (new). Commit 46eb92b.
+
+- **/api/stats endpoint** — aggregate JSON stats (total_turns, cost, tokens, subagent, waste_events, fixes_recorded). Previously 404.
+  Files: `server.py:369+`. Commit 46eb92b.
+
+- **daily_qa.py + burnctl qa** — automated 14-check regression suite covering all CLI commands (via `npx burnctl@latest` from fresh /tmp) + HTTP endpoints. Each check scored WOW/OK/DOD with regression guards for every QA-cycle bug. Exit code reflects severity (0/1/2) for cron alerts. Reports persisted at `qa-reports/YYYY-MM-DD-HH.md` + rolling `qa-reports/latest.md`. Cron entry installed at 06:00 UTC.
+  Files: `daily_qa.py` (new), `cli.py`, `bin/burnctl.js`, `package.json`, crontab. Commit 71a8bac. Shipped v4.0.11.
+
+- **daily_qa --trend** — reads all `qa-reports/*.md` from last 7 days, extracts hidden `trend-metrics` block (9 numeric metrics), renders OLDEST/MID/LATEST table with per-metric `[OK]` / `[stable]` / `[DRIFT]` direction flags. `capture_local_metrics()` runs fix-scoreboard + work-timeline against the real DB from the repo cwd to feed metrics the fresh-/tmp/ suite can't see.
+  Files: `daily_qa.py` (+ ~200 lines). Commit 5cd905c. Shipped v4.0.12.
+
+- **Pre-Publish QA Gate rule in CLAUDE.md** — Exit 0 → safe, Exit 1 → review OK items, Exit 2 → STOP. Invocation order pinned: daily_qa → tester → fixer → reviewer → publish → deploy.
+
+- **claudemd-audit command** — parses ~/.claude/CLAUDE.md + project-level CLAUDE.md files, classifies each rule against 8 waste-pattern keyword groups, flags rules with zero waste_events matches in 30d as dead weight. Monthly token-cost estimate.
+  Files: `claudemd_audit.py` (new), `cli.py`, `bin/burnctl.js`. Shipped v4.1.0.
+
+- **mcp-audit command** — reads settings.json + .mcp.json files, scans JSONL for `mcp__<server>__*` tool uses in last 30 days, classifies ACTIVE / ORPHAN / LEGACY. Surfaces "configured but never called" servers as token overhead.
+  Files: `mcp_audit.py` (new), `cli.py`, `bin/burnctl.js`. Shipped v4.1.0.
+
+- **cost_share_pct field on /api/projects** — true cost share, separate from token share (the two now honestly differ per project).
+  Files: `analyzer.py`, `templates/dashboard.html`. Commit 6df4724.
+
+- **baseline_corrupted column on fixes table** — new flag for fixes whose baseline was captured AFTER the fix was applied (pre-v3.3 snapshot-timing bug). Fix-scoreboard shows "baseline N/A" instead of inventing a delta.
+  Files: `db.py`, `fix_scoreboard.py`.
+
+### Fixed
+
+**QA-cycle bugs (v4.0.10):**
+- **BUG-1 work-timeline maintainer-path leak** — dropped `~/projects/burnctl/data/usage.db` fallback from `load_db()`. Fresh /tmp install now correctly says "no database found" instead of leaking maintainer's real data.
+  Files: `work_timeline.py`
+- **BUG-2 /api/stats 404** — route now registered. Previously dashboard template had no caller but direct curl returned 404 HTML.
+  Files: `server.py`
+- **BUG-3 resume-audit 63% noise** — criterion tightened: 5m_TTL_dominant AND cache_read_ratio<0.50 (was OR). Flagged 112/178 → 4/178 (63% → 2.2%).
+  Files: `resume_audit.py`
+- **BUG-4 duplicate fix_generator inserts** — dedup on (project, fix_type, title); repeat calls return existing id.
+  Files: `fix_generator.py`
+- **BUG-5/6 "Claudash" leaking in /api/projects** — `_remap_project_name()` in server.py maps legacy name → "burnctl". Historical DB rows untouched.
+  Files: `server.py`
+- **BUG-7 version-check misleading interceptor nudge** — only shown on bad versions (2.1.69-2.1.89) or when version undetectable; clean-version affirmation added.
+  Files: `version_check.py`
+- **BUG-8 schema.md missing** — canonical column reference created.
+  Files: `schema.md` (new)
+- **BUG-9 claude_ai_usage dead table** — marked DEPRECATED in db.py with v5.x migration TODO.
+  Files: `db.py`
+
+**Dashboard display bugs (v4.1.0):**
+- **BUG-A Share% column showed token share** → now shows cost share. `cost_share_pct` added to /api/projects; dashboard template reads new field with token_share_pct fallback. Tidify share now 48.8% (cost) vs 40.5% (tokens) — honestly different.
+  Files: `analyzer.py`, `templates/dashboard.html`
+- **BUG-B Tidify waste showed $0.00** → root cause was 5 synthetic `test-runner-*` rows polluting `waste_events`. Deleted. Real Tidify repeated_reads now shows $4,876.71 across 43 events.
+  Files: DB cleanup only (no code change — waste_patterns.py was already computing cost correctly)
+- **BUG-C burnctl waste $2,266 inflated** → subagent filter added to `_detect_repeated_reads` loop (skip `is_subagent=1`). Cleaned 49 orphan subagent waste rows. burnctl: $2,468 → $1,505 (-39%).
+  Files: `waste_patterns.py`
+- **BUG-D ghost cost_outlier fix** → deleted fix id=13 (Tidify, empty baseline_json) + 13 orphan fix_measurements rows.
+  Files: DB cleanup
+- **BUG-E 4 (actually 5) fixes shared identical total=90 baseline** → added `baseline_corrupted` column; marked ids 5,6,7,8,10; fix-scoreboard now shows "baseline N/A" honestly. Monthly savings unchanged at $1,708 (only truly-measurable fixes count).
+  Files: `db.py`, `fix_scoreboard.py`
+
+**daily_qa false-positive catch-22:** new commands returning "unknown command" on published version would DOD the gate. Fixed `score_smoke` to mark these OK (pending-publish). Also `score_peak_hours` regex made case-insensitive (caught live "PEAK HOURS" state returning OK).
+  Files: `daily_qa.py`
+
+### Removed
+- **5 test-runner synthetic waste_events rows** — fixture pollution from `burnctl_test_runner.py` runs.
+- **49 subagent waste_events rows** — BUG-C cleanup.
+- **1 ghost fixes row (id=13)** + **13 orphan fix_measurements rows** — BUG-D cleanup.
+
+### Architecture Decisions
+- **`overhead_audit.py::load_db()` is the canonical DB-path discovery pattern.** Pinned in both burnctl-tester and burnctl-fixer agent definitions. Any new command that opens the DB must copy this exact shape: two candidates, no maintainer paths.
+  Impact: BUG-1 class (maintainer leak on npm users) cannot recur without tripping the gate.
+
+- **Historical DB rows are not rewritten post-rebrand.** `/root/backups/claudash/` path, `CLAUDASH_*` env var aliases, and `project='Claudash'` rows all remain in the DB for backward-compat (rclone pipeline) or historical accuracy. User-visible surfaces get `_remap_project_name()` instead.
+  Impact: rebranding is a display-layer concern, not a data-layer rewrite.
+
+- **baseline_json is not migratable for corrupted pre-v3.3 fixes.** Rather than invent numbers, `baseline_corrupted=1` + "baseline N/A" is the honest display. Totals exclude these.
+  Impact: fix-scoreboard ROI claims become defensible — only delta-measurable fixes count toward $1,708/mo.
+
+- **Pre-publish gate is mandatory, not optional** (CLAUDE.md rule). Exit 2 → STOP. Exit 1 → manual OK-item review. This locks in the discipline that caught BUG-1 before users did.
+  Impact: no publish without daily_qa.py pass. v4.1.0 was the first publish to enforce its own rule.
+
+### Known Issues / Not Done
+- **User's final prompt asked to rebuild mcp-audit + claudemd-audit per a new spec.** The commands already shipped in v4.1.0 with working implementations + 16/16 WOW in daily QA. Rather than rebuild, I surfaced the spec-vs-shipped diff and asked A (rebuild minor) / B (align format, patch) / C (leave as-is). Waiting on user direction — not building until user picks.
+- **work-timeline precision** is ±5 min (polling interval). Fine for daily trend but no better.
+- **MCP per-server attribution** requires JSONL re-scan (no sessions.mcp_server_name column). Current mcp-audit works but is O(JSONL size) per run.
+- **claudemd-audit keyword matching** flags many rules as UNCLASSIFIED on domain-specific CLAUDE.md files (e.g., Tidify architecture notes). Expected behavior — not every rule targets a waste pattern — but user may want a --verbose mode showing the classification decision per rule. Deferred.
+
+### Shipped
+- **5 npm releases in one session**: v4.0.9 (work-timeline), v4.0.10 (QA-cycle 9 bugs), v4.0.11 (daily_qa + burnctl qa), v4.0.12 (qa --trend), v4.1.0 (claudemd-audit + mcp-audit + 5 dashboard bugs).
+- **pm2 restarts**: 9 → 13 (4 deploys this session).
+- **QA reports saved**: `eval-session.md`, `post-eval-session.md`, `2026-04-20-pre-fix.md`, `2026-04-20-10.md`, `2026-04-20-15.md`, rolling `latest.md`.
+- **Final state**: v4.1.0 on npm, `/api/health` 4.1.0, daily QA 16/16 WOW, cron installed at 06:00 UTC.

@@ -50,3 +50,8 @@ usage_export.csv
 .dev-cdc/
 .npmrc
 claudash.db
+
+# ── Guardian pipeline local reports (not tracked) ──
+research-reports/
+audit-reports/
+checklists/

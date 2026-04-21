@@ -68,16 +68,18 @@ def run_subagent_audit(days=30):
         print(f"\n  ✓  Subagent spend looks proportional.")
 
     # Per-project breakdown (uses is_subagent only)
+    # COALESCE(inferred_project, project) — scanner may have inferred a
+    # project label for rows that otherwise resolved to "Other".
     cur.execute(f"""
         SELECT
-          project,
+          COALESCE(NULLIF(TRIM(inferred_project), ''), project) AS display_project,
           SUM(CASE WHEN is_subagent=1 THEN cost_usd ELSE 0 END) AS sub_cost,
           SUM(cost_usd) AS proj_total,
           COUNT(DISTINCT CASE WHEN is_subagent=1 THEN session_id END) AS sub_sess,
           SUM(CASE WHEN is_subagent=1 THEN input_tokens+output_tokens ELSE 0 END) AS sub_tokens
         FROM sessions
         WHERE timestamp >= {cutoff}
-        GROUP BY project
+        GROUP BY display_project
         HAVING sub_cost > 0
         ORDER BY sub_cost DESC
         LIMIT 10

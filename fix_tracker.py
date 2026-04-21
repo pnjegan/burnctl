@@ -194,7 +194,7 @@ def capture_baseline(conn, project, days_window=7, since_override=None):
     # ~2 extra `Read` calls beyond the first necessary one. Both are scaled
     # by per-turn token averages, NOT per-session. Scaling by per-session
     # values wildly over-counts under prompt caching (cache_read dwarfs
-    # everything else) and makes effective_window_pct collapse to 0.
+    # everything else) and makes waste_free_ratio collapse to 0.
     REPEATED_READ_EXTRA_TURNS = 2
     tokens_wasted_on_floundering = int(waste["floundering"] * avg_tokens_per_turn)
     tokens_wasted_on_repeated_reads = int(
@@ -203,9 +203,9 @@ def capture_baseline(conn, project, days_window=7, since_override=None):
     wasted_total = tokens_wasted_on_floundering + tokens_wasted_on_repeated_reads
 
     if total_tokens > 0:
-        effective_window_pct = max(0.0, (total_tokens - wasted_total) / total_tokens * 100)
+        waste_free_ratio = max(0.0, (total_tokens - wasted_total) / total_tokens * 100)
     else:
-        effective_window_pct = 0.0
+        waste_free_ratio = 0.0
 
     # Sub-agent cost share
     subagent_cost_pct = (subagent_cost / total_cost * 100) if total_cost > 0 else 0.0
@@ -241,7 +241,7 @@ def capture_baseline(conn, project, days_window=7, since_override=None):
         "window_hit_rate": round(window_hit_rate, 3),
         "tokens_wasted_on_floundering": tokens_wasted_on_floundering,
         "tokens_wasted_on_repeated_reads": tokens_wasted_on_repeated_reads,
-        "effective_window_pct": round(effective_window_pct, 2),
+        "waste_free_ratio": round(waste_free_ratio, 2),
         "files_per_window": fpw,
         # Scratch fields used by compute_delta
         "_total_tokens": total_tokens,
@@ -277,11 +277,41 @@ def _estimate_files_per_window(conn, project, acct_id, since):
 
 # ─── Delta computation + verdict ─────────────────────────────────
 
+_PCT_CHANGE_MIN = -100.0
+_PCT_CHANGE_MAX = 500.0
+
+
 def _pct_change(before, after):
-    """Signed percent change. Returns 0 when `before` is 0 to avoid inf."""
+    """Signed percent change, clamped to [-100%, +500%].
+
+    Returns 0 when `before` is 0 (avoids inf). Values outside the clamp
+    range are capped at the boundary — a 9900% metric move (e.g. 1 → 100
+    waste events) would distort the verdict if surfaced raw. Callers that
+    need to know the value was clamped can use `is_anomalous_pct_change()`.
+
+    The clamp is defensive: tiny baselines (n=1 waste events, n=1 session)
+    produce misleading percentages that get passed into display and (in
+    older code paths) into dollar math. Real improvements that happen to
+    exceed +500% are genuinely extreme and should be treated as anomalies
+    rather than headlined.
+    """
     if before == 0:
         return 0.0
-    return round(((after - before) / before) * 100.0, 1)
+    raw = ((after - before) / before) * 100.0
+    clamped = max(_PCT_CHANGE_MIN, min(_PCT_CHANGE_MAX, raw))
+    return round(clamped, 1)
+
+
+def is_anomalous_pct_change(before, after):
+    """True if the raw pct-change would exceed the [-100, +500] clamp.
+
+    Use from verdict / display code to add an 'anomalous' note next to
+    numbers that hit the cap — e.g. waste_events moved from 1 to 20
+    (raw +1900%, clamped to +500%)."""
+    if before == 0:
+        return False
+    raw = ((after - before) / before) * 100.0
+    return raw < _PCT_CHANGE_MIN or raw > _PCT_CHANGE_MAX
 
 
 def compute_delta(conn, fix_id):
@@ -326,8 +356,12 @@ def compute_delta(conn, fix_id):
     total_before = before_waste.get("total", 0) or 0
     total_after = after_waste.get("total", 0) or 0
 
-    before_eff = baseline.get("effective_window_pct", 0) or 0
-    after_eff = current.get("effective_window_pct", 0) or 0
+    # Backward-compat read: waste_free_ratio is the current key name;
+    # historical baseline_json rows still carry effective_window_pct.
+    before_eff = (baseline.get("waste_free_ratio")
+                  or baseline.get("effective_window_pct") or 0)
+    after_eff = (current.get("waste_free_ratio")
+                 or current.get("effective_window_pct") or 0)
 
     before_fpw = baseline.get("files_per_window", 0) or 0
     after_fpw = current.get("files_per_window", 0) or 0
@@ -377,9 +411,9 @@ def compute_delta(conn, fix_id):
         "repeated_reads": _waste_delta("repeated_reads"),
         "deep_no_compact": _waste_delta("deep_no_compact"),
         "cost_outliers": _waste_delta("cost_outliers"),
-        "effective_window_pct": {"before": round(before_eff, 1),
-                                 "after": round(after_eff, 1),
-                                 "pct_change": _pct_change(before_eff, after_eff)},
+        "waste_free_ratio": {"before": round(before_eff, 1),
+                             "after": round(after_eff, 1),
+                             "pct_change": _pct_change(before_eff, after_eff)},
         "tokens_saved": tokens_saved,
         "files_per_window": {"before": before_fpw, "after": after_fpw,
                              "pct_change": _pct_change(before_fpw, after_fpw)},
@@ -419,7 +453,7 @@ def determine_verdict(delta, plan_type, sessions_since):
         return "worsened"
 
     if plan_type in ("max", "pro"):
-        # Cost+turns override: effective_window_pct is a ratio
+        # Cost+turns override: waste_free_ratio is a ratio
         # (waste_tokens / total_tokens). When a fix shrinks total_tokens
         # faster than waste_tokens (e.g. trimmed CLAUDE.md), the ratio
         # can degrade even though cost and turn count fell. Treat a
@@ -429,7 +463,8 @@ def determine_verdict(delta, plan_type, sessions_since):
         turns_pct = delta.get("avg_turns_per_session", {}).get("pct_change", 0) or 0
         if cost_pct <= -20 and turns_pct <= -20:
             return "improving"
-        eff_pct = delta["effective_window_pct"]["pct_change"]
+        eff_pct = (delta.get("waste_free_ratio")
+                   or delta.get("effective_window_pct") or {}).get("pct_change", 0)
         if eff_pct >= WINDOW_IMPROVING_PCT:
             return "improving"
         if eff_pct <= -WINDOW_WORSENED_PCT:
@@ -553,7 +588,7 @@ def build_share_card(fix, latest_measurement):
     lines.append(f"• {pattern_label} events: {waste_before} → {waste_after} ({_signed(waste_pct)}%)")
 
     if plan_type in ("max", "pro"):
-        eff = delta.get("effective_window_pct", {})
+        eff = delta.get("waste_free_ratio") or delta.get("effective_window_pct", {})
         fpw = delta.get("files_per_window", {})
         lines.append(f"• Window efficiency: {eff.get('before', 0)}% → {eff.get('after', 0)}% useful tokens")
         lines.append(f"• Output per window: {fpw.get('before', 0)} → {fpw.get('after', 0)} files ({_signed(fpw.get('pct_change', 0))}%)")

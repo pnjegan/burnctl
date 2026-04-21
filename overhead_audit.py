@@ -53,7 +53,7 @@ def run_overhead_audit(days=30):
     cur.execute(f"""
         WITH per_session AS (
           SELECT session_id,
-                 project,
+                 COALESCE(NULLIF(TRIM(inferred_project), ''), project) AS project,
                  MAX(cache_creation_tokens) AS overhead_tokens
           FROM sessions
           WHERE timestamp >= {cutoff}
@@ -99,7 +99,7 @@ def run_overhead_audit(days=30):
     cur.execute(f"""
         WITH per_session AS (
           SELECT session_id,
-                 project,
+                 COALESCE(NULLIF(TRIM(inferred_project), ''), project) AS project,
                  MAX(cache_creation_tokens) AS overhead_tokens
           FROM sessions
           WHERE timestamp >= {cutoff}

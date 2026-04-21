@@ -29,6 +29,8 @@ const SUBCOMMANDS = new Set([
   'qa',
   // v4.1 additions
   'claudemd-audit', 'mcp-audit',
+  // v4.2 additions
+  'why-limit',
 ]);
 
 const args = process.argv.slice(2);
@@ -106,6 +108,7 @@ function printHelp() {
   console.log('  burnctl qa                    Daily QA suite — WOW/OK/DOD per command');
   console.log('  burnctl claudemd-audit        Find dead CLAUDE.md rules (0 matching waste events)');
   console.log('  burnctl mcp-audit             Find orphan MCP servers (configured but never called)');
+  console.log('  burnctl why-limit             Explain current 5-hour window — where tokens went + fix options');
   console.log('  burnctl fix apply <id>        Append fix to CLAUDE.md, mark measuring');
   console.log('  burnctl fix start "desc" --project X    Start measurement');
   console.log('  burnctl fix result <id>       Show before/after delta');

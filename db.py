@@ -120,6 +120,11 @@ def init_db():
         ("work_classification", "TEXT"),
         # v3.2 — sub-agent prompt quality (scoped/balanced/unbounded/unknown)
         ("prompt_quality", "TEXT"),
+        # v4.2 — inferred project label for sessions that resolved to
+        # UNKNOWN_PROJECT at ingest. Scanner peeks at the first tool calls
+        # in the JSONL and pulls the top-level project-dir name from any
+        # Read/Write path it finds. NULL when not inferrable.
+        ("inferred_project", "TEXT"),
     ]:
         if not _column_exists(conn, "sessions", col):
             conn.execute(f"ALTER TABLE sessions ADD COLUMN {col} {typedef}")
@@ -799,8 +804,8 @@ def insert_session(conn, row):
                 input_tokens, output_tokens, cache_read_tokens,
                 cache_creation_tokens, cost_usd, source_path,
                 compaction_detected, tokens_before_compact, tokens_after_compact,
-                is_subagent, parent_session_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                is_subagent, parent_session_id, inferred_project)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 row["session_id"], row["timestamp"], row["project"],
                 row["account"], row["model"], row["input_tokens"],
@@ -812,6 +817,7 @@ def insert_session(conn, row):
                 row.get("tokens_after_compact"),
                 row.get("is_subagent", 0),
                 row.get("parent_session_id"),
+                row.get("inferred_project"),
             ),
         )
         return conn.total_changes > 0

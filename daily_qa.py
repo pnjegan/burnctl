@@ -83,13 +83,44 @@ def has_traceback(output):
     return "Traceback" in output or "ModuleNotFoundError" in output or "SyntaxError:" in output
 
 
+_DEFAULT_LEAK_PATTERNS = (
+    "$227.99",  # known maintainer session cost
+    "~/projects/burnctl",
+    "/root/projects/burnctl",
+)
+
+
+def _load_leak_patterns():
+    """Load maintainer-leak substrings from .burnctlignore next to this file.
+
+    File format: one substring per line, lines starting with `#` ignored.
+    Falls back to _DEFAULT_LEAK_PATTERNS when the file is absent, empty,
+    or unreadable. Making this loadable from disk lets other users of
+    burnctl add their own hostnames / project paths without forking the
+    QA script.
+    """
+    f = REPO_DIR / ".burnctlignore"
+    if not f.exists():
+        return _DEFAULT_LEAK_PATTERNS
+    try:
+        patterns = tuple(
+            line.strip()
+            for line in f.read_text().splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        )
+    except OSError:
+        return _DEFAULT_LEAK_PATTERNS
+    return patterns or _DEFAULT_LEAK_PATTERNS
+
+
 def has_maintainer_leak(output):
-    # fresh /tmp run MUST NOT show real session data
-    return any(s in output for s in (
-        "$227.99",  # known maintainer session cost
-        "~/projects/burnctl",
-        "/root/projects/burnctl",
-    ))
+    """True if a known maintainer substring appears in user-visible output.
+
+    Load list is cached per-process via _load_leak_patterns() — if you
+    edit .burnctlignore, re-run daily_qa (single-shot design).
+    """
+    patterns = _load_leak_patterns()
+    return any(s in output for s in patterns)
 
 
 def has_claudash_in_user_output(output):
@@ -268,6 +299,7 @@ TESTS = [
     ("work-timeline 7d", "npx",  "work-timeline --days 7", score_work_timeline),
     ("claudemd-audit",  "npx",  "claudemd-audit",        score_smoke),
     ("mcp-audit",       "npx",  "mcp-audit",             score_smoke),
+    ("why-limit",       "npx",  "why-limit",             score_smoke),
     # HTTP endpoints
     ("api/health",       "curl", "/api/health",           score_api_health),
     ("api/stats",        "curl", "/api/stats",            score_api_stats),

@@ -599,7 +599,7 @@ def cmd_fixes():
         if f["status"] == "confirmed" and latest:
             delta = latest.get("delta", {})
             waste = delta.get("waste_events", {})
-            eff = delta.get("effective_window_pct", {})
+            eff = delta.get("waste_free_ratio") or delta.get("effective_window_pct", {})
             cost = delta.get("avg_cost_per_session", {})
             wb = waste.get("before", 0); wa = waste.get("after", 0); wp = waste.get("pct_change", 0)
             if plan in ("max", "pro"):
@@ -689,10 +689,10 @@ def cmd_fix_add():
     conn.close()
 
     waste_total = (baseline.get("waste_events") or {}).get("total", 0)
-    eff = baseline.get("effective_window_pct", 0)
+    eff = baseline.get("waste_free_ratio") or baseline.get("effective_window_pct", 0) or 0
     avg_cost = baseline.get("avg_cost_per_session", 0)
     print(f"  ✓ Baseline: {waste_total} waste events, "
-          f"{eff:.0f}% window efficiency, ${avg_cost:.2f}/session API-equiv")
+          f"{eff:.0f}% waste-free ratio, ${avg_cost:.2f}/session API-equiv")
     print(f"  ✓ Fix #{fix_id} recorded.")
     print()
     print("  Next steps:")
@@ -801,7 +801,7 @@ def cmd_measure():
     waste = delta.get("waste_events", {})
     flounder = delta.get("floundering", {})
     reads = delta.get("repeated_reads", {})
-    eff = delta.get("effective_window_pct", {})
+    eff = delta.get("waste_free_ratio") or delta.get("effective_window_pct", {})
     fpw = delta.get("files_per_window", {})
     turns = delta.get("avg_turns_per_session", {})
     cps = delta.get("avg_cost_per_session", {})
@@ -2011,6 +2011,12 @@ def cmd_mcp_audit():
     run_mcp_audit()
 
 
+def cmd_why_limit():
+    """`burnctl why-limit` — explain current 5-hour window usage."""
+    from why_limit import main as why_limit_main
+    sys.exit(why_limit_main())
+
+
 def cmd_fix_apply():
     """`burnctl fix apply <fix_id>` — write the fix to CLAUDE.md."""
     from fix_apply import apply_fix
@@ -2149,6 +2155,7 @@ def main():
         "qa": cmd_qa,
         "claudemd-audit": cmd_claudemd_audit,
         "mcp-audit": cmd_mcp_audit,
+        "why-limit": cmd_why_limit,
     }
 
     handler = commands.get(cmd)

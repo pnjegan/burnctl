@@ -224,6 +224,90 @@ def _parse_subagent_info(filepath):
     return 1, None
 
 
+_INFER_MAX_TOOL_CALLS = 10
+# Filesystem noise — top-level dirs we never want to bubble up as a
+# project label (e.g. /root, /home, /tmp, /var).
+_INFER_SKIP_SEGMENTS = (
+    "root", "home", "tmp", "var", "opt", "etc", "usr",
+    "private", "mnt", "users",
+)
+
+
+def _infer_project_from_jsonl(filepath, max_calls=_INFER_MAX_TOOL_CALLS):
+    """Peek at the first few assistant tool_use blocks; return a likely
+    project name derived from Read()/Write()/Edit() paths.
+
+    Heuristic: for every tool call with a path-shaped input, find the
+    first non-system top-level directory component and return it.
+    If nothing path-like is seen, return None so the caller falls back
+    to "Other". We intentionally keep the detection narrow — we do NOT
+    want to invent a label from a Bash command string.
+    """
+    seen = 0
+    candidates = []
+    try:
+        with open(filepath, "r", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if obj.get("type") != "assistant":
+                    continue
+                msg = obj.get("message") or {}
+                if not isinstance(msg, dict):
+                    continue
+                content = msg.get("content")
+                if not isinstance(content, list):
+                    continue
+                for block in content:
+                    if not isinstance(block, dict):
+                        continue
+                    if block.get("type") != "tool_use":
+                        continue
+                    seen += 1
+                    name = (block.get("name") or "").lower()
+                    if name not in ("read", "write", "edit", "multiedit"):
+                        continue
+                    inp = block.get("input") or {}
+                    if not isinstance(inp, dict):
+                        continue
+                    path = (
+                        inp.get("file_path")
+                        or inp.get("path")
+                        or inp.get("filename")
+                    )
+                    if not path:
+                        continue
+                    # Extract first non-system path segment.
+                    parts = [p for p in str(path).split("/") if p]
+                    for p in parts:
+                        if p.lower() in _INFER_SKIP_SEGMENTS:
+                            continue
+                        # Skip "projects" — too generic (/root/projects/X/...)
+                        if p.lower() in ("projects", "workspace", "repos"):
+                            continue
+                        # Skip filenames (no slash after → probably a file)
+                        # i.e. only return if there is deeper path content
+                        candidates.append(p)
+                        break
+                    if seen >= max_calls:
+                        break
+                if seen >= max_calls:
+                    break
+    except OSError:
+        return None
+
+    if not candidates:
+        return None
+    # Most common top-level dir wins
+    from collections import Counter
+    return Counter(candidates).most_common(1)[0][0]
+
+
 def scan_jsonl_file(filepath, folder_path, conn, source_path="", project_map=None):
     """Parse new lines from a JSONL file using incremental offset tracking."""
     # For subagent files, resolve project from the *parent* project folder
@@ -237,6 +321,13 @@ def scan_jsonl_file(filepath, folder_path, conn, source_path="", project_map=Non
         parent_project_folder = os.path.dirname(parent_project_folder)
         resolve_against = parent_project_folder or folder_path
     project, account = resolve_project(resolve_against, project_map)
+
+    # Inferred project for rows that resolved to UNKNOWN_PROJECT / Other.
+    # Stored as a separate column so downstream queries can COALESCE on it
+    # without rewriting historical project rows.
+    inferred_project = None
+    if not project or project == UNKNOWN_PROJECT:
+        inferred_project = _infer_project_from_jsonl(filepath)
 
     try:
         file_size = os.path.getsize(filepath)
@@ -264,6 +355,13 @@ def scan_jsonl_file(filepath, folder_path, conn, source_path="", project_map=Non
         for sid, indices in sessions.items():
             indices.sort(key=lambda idx: rows[idx]["timestamp"])
             session_data = [rows[idx] for idx in indices]
+            # Skip compaction detection on sub-agent files: sub-agents run in
+            # short isolated contexts and their turn-to-turn token drops are
+            # NOT user-initiated /compact events. Firing compaction_detected=1
+            # on them produces false positives (e.g. Brainworks session
+            # fb516355 had 13 "compactions" flagged — all sub-agent noise).
+            if session_data and session_data[0].get("is_subagent") == 1:
+                continue
             for evt_idx, before, after in _detect_compaction(session_data):
                 real_idx = indices[evt_idx]
                 rows[real_idx]["compaction_detected"] = 1
@@ -299,6 +397,7 @@ def scan_jsonl_file(filepath, folder_path, conn, source_path="", project_map=Non
                     parsed["source_path"] = filepath
                     parsed["is_subagent"] = is_subagent
                     parsed["parent_session_id"] = parent_sid
+                    parsed["inferred_project"] = inferred_project
                     raw_rows.append(parsed)
                     # Flush batch to DB to keep memory bounded on cold scans
                     if len(raw_rows) >= BATCH_FLUSH_SIZE:

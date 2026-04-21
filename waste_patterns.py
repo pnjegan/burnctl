@@ -111,8 +111,22 @@ def _file_session_id(filepath):
 # ─── Pattern detectors ───────────────────────────────────────────
 
 def _input_hash(inp):
-    """Short hash of tool input for deduplication. Identical (tool, input)
-    pairs are intentional retries, not floundering."""
+    """Short hash of tool input. Used to GROUP identical (tool, input) pairs
+    so a run of ≥FLOUNDER_THRESHOLD of them inside a FLOUNDER_WINDOW-wide
+    slice can be flagged as floundering.
+
+    IMPORTANT (corrected 2026-04-21): identical-input retries DO flag if
+    they repeat densely. Intentional retries that are widely spaced apart
+    (>FLOUNDER_WINDOW other tool calls between repeats) stay un-flagged
+    because the window check catches spacing, not identity. A TDD loop that
+    runs `Bash("npm test")` 5× in quick succession WILL show as floundering
+    — that's a correct flag most of the time, and the user can dismiss it.
+
+    Known precision gaps (not fixed here, documented for honesty):
+      - whitespace-sensitive: "npm test" != "npm test " produce different hashes
+      - dict key-order sensitive (Python 3.7+ preserves insert order)
+      - 200-char truncation can collide on inputs with long identical prefixes
+    """
     if not inp:
         return ""
     return hashlib.md5(str(inp)[:200].encode()).hexdigest()[:8]
@@ -416,6 +430,13 @@ def detect_all(conn=None):
             repeated_count += 1
 
     # ── 3: COST_OUTLIER — sessions whose cost is >3x project 30d avg ──
+    #
+    # Minimum-sample guard (added 2026-04-21): require the project to have
+    # at least COST_OUTLIER_MIN_SESSIONS distinct sessions in the 30d window
+    # before ANY outlier can fire. A project with 3-4 sessions has too
+    # little signal — one oddly-cheap session drags the avg down, the next
+    # normal session is mechanically "3x the avg" and we flag garbage.
+    COST_OUTLIER_MIN_SESSIONS = 10
     outlier_count = 0
     proj_avgs = {
         r[0]: (r[1] or 0) for r in conn.execute(
@@ -424,8 +445,9 @@ def detect_all(conn=None):
             " FROM sessions "
             " WHERE timestamp >= strftime('%s','now') - 30*86400 "
             " GROUP BY project, session_id) "
-            "GROUP BY project"
-        ).fetchall()
+            "GROUP BY project "
+            "HAVING COUNT(DISTINCT session_id) >= ?"
+        , (COST_OUTLIER_MIN_SESSIONS,)).fetchall()
     }
     session_totals = conn.execute(
         "SELECT session_id, project, account, "
