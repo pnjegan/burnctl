@@ -1,6 +1,6 @@
 {
   "name": "burnctl",
-  "version": "4.2.2",
+  "version": "4.3.0",
   "description": "AI burn rate monitor for Claude Code. Finds waste patterns, generates CLAUDE.md fixes, measures impact. Local-only, zero pip deps.",
   "bin": {
     "burnctl": "./bin/burnctl.js"
