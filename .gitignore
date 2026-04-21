@@ -55,3 +55,17 @@ claudash.db
 research-reports/
 audit-reports/
 checklists/
+
+# Internal docs — never push to GitHub (permanent rule)
+BURNCTL_MASTER_DOC*.md
+CLAUDE.md
+MEMORY.md
+INTERNALS.md
+FIXES_TODO.md
+FOUNDING_DOC*.md
+docs/audits/
+qa-reports/
+research-reports/
+audit-reports/
+checklists/
+.dev-cdc/
