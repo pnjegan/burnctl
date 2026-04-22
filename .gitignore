@@ -125,3 +125,5 @@ research-reports/
 audit-reports/
 checklists/
 .dev-cdc/
+*-audit.txt
+burnctl-complete-audit.txt
