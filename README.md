@@ -1,3 +1,19 @@
+> ### ⚠️ Security Notice — git history rewritten (2026-04-22)
+>
+> **What happened:** On 2026-04-11 (initial commit), a local `data/usage.db` file was unintentionally committed before the `.gitignore` was finalized. It was removed from `HEAD` on 2026-04-13, but the blob remained in git history.
+>
+> **What it contained:** test-run session metadata, a dashboard key, a sync token, an OpenRouter API key, and two claude.ai session cookies. All credentials have been rotated; the old values are confirmed invalid (HTTP 403 when tested against claude.ai/api/organizations).
+>
+> **What was fixed:** On 2026-04-22, the blob was purged from all git history via `git filter-repo`, and this repository was force-pushed to overwrite the remote.
+>
+> **What you need to do:** If you cloned burnctl before 2026-04-22, your clone has divergent history. Please re-clone:
+>
+> ```bash
+> cd .. && rm -rf burnctl && git clone https://github.com/pnjegan/burnctl.git
+> ```
+>
+> A full incident writeup is planned for a LinkedIn post. This repository's own 6-dimension self-audit (plus a 7th independent meta-review) caught the issue — documented in `audit-reports/2026-04-22-*.md`.
+
 <div align="center">
 
 <img src="logo.svg" alt="burnctl" width="300"><br><br>
