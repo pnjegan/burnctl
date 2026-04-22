@@ -815,6 +815,12 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   <!-- Windows -->
   <section class="section" id="windows-section"></section>
 
+  <!-- Recent browser chats (v4.4.0) — titles from chat_title_sync.py -->
+  <section class="section" id="browser-chats-section">
+    <h2 class="section-title">Recent Browser Sessions <span class="count" id="bchat-count">0</span></h2>
+    <div id="bchat-body"></div>
+  </section>
+
   <!-- Projects -->
   <section class="section" id="projects-section">
     <h2 class="section-title">Projects <span class="count" id="proj-count">0</span></h2>
@@ -1188,6 +1194,81 @@ function authHeaders() {
       );
     });
     $('windows-section').innerHTML = blocks.join('');
+  }
+
+  // v4.4.0 — self-fetching card for chat titles pushed by chat_title_sync.py.
+  // Row colour-coding: >120min red, >60min yellow, <=60min green. IST display.
+  function renderBrowserChats() {
+    fetch('/api/browser-chats-recent')
+      .then(function(r) { return r.json(); })
+      .then(function(resp) {
+        var chats = (resp && resp.chats) || [];
+        $('bchat-count').textContent = chats.length;
+        if (!chats.length) {
+          $('bchat-body').innerHTML =
+            '<div class="empty" style="padding:18px;color:var(--text-tertiary);font-family:var(--mono);font-size:13px">' +
+              'No chat titles yet &mdash; run ' +
+              '<code style="background:var(--bg-tertiary,#f3f4f6);padding:2px 6px;border-radius:3px">chat_title_sync.py</code>' +
+              ' on your Mac.' +
+            '</div>';
+          return;
+        }
+        var head =
+          '<table class="proj-table" style="width:100%">' +
+            '<thead><tr>' +
+              '<th style="width:14%">Time (IST)</th>' +
+              '<th style="width:14%">Account</th>' +
+              '<th style="width:10%">Duration</th>' +
+              '<th style="width:8%">Flag</th>' +
+              '<th>Chat Title</th>' +
+            '</tr></thead><tbody>';
+        var rows = chats.map(function(c) {
+          var min = c.duration_min | 0;
+          // Matches spec: red > 120min, yellow > 60min, green <=60min.
+          var bg, flag, flagText;
+          if (min > 120) {
+            bg = 'background:rgba(239,68,68,0.12)';
+            flag = '&#9888;&#65039;';
+            flagText = 'context bloat';
+          } else if (min > 60) {
+            bg = 'background:rgba(245,158,11,0.12)';
+            flag = '&#9888;&#65039;';
+            flagText = 'long session';
+          } else {
+            bg = 'background:rgba(16,185,129,0.08)';
+            flag = '&#9989;';
+            flagText = 'ok';
+          }
+          // IST = UTC+5:30. Format as MM-DD HH:MM.
+          var ist = new Date((c.first_visit * 1000) + (5.5 * 3600 * 1000));
+          var ts =
+            String(ist.getUTCMonth() + 1).padStart(2, '0') + '-' +
+            String(ist.getUTCDate()).padStart(2, '0') + ' ' +
+            String(ist.getUTCHours()).padStart(2, '0') + ':' +
+            String(ist.getUTCMinutes()).padStart(2, '0');
+          var dur = min >= 60
+            ? (Math.floor(min / 60) + 'h ' + String(min % 60).padStart(2, '0') + 'm')
+            : (min + 'min');
+          return (
+            '<tr style="' + bg + '">' +
+              '<td style="font-family:var(--mono);font-size:12px">' + ts + '</td>' +
+              '<td><span class="account-tag">' + esc(c.account) + '</span></td>' +
+              '<td style="font-family:var(--mono)">' + dur + '</td>' +
+              '<td>' + flag + ' <span style="color:var(--text-tertiary);font-size:11px">' + flagText + '</span></td>' +
+              '<td>' + esc(c.title || '') +
+                ' <span style="color:var(--text-tertiary);font-size:11px">(' + esc(c.browser || '') + ')</span>' +
+              '</td>' +
+            '</tr>'
+          );
+        }).join('');
+        $('bchat-body').innerHTML = head + rows + '</tbody></table>';
+      })
+      .catch(function() {
+        $('bchat-body').innerHTML =
+          '<div class="empty" style="padding:18px;color:var(--text-tertiary);font-family:var(--mono);font-size:13px">' +
+          'Failed to load recent chats.' +
+          '</div>';
+      });
   }
 
   function renderProjects(data) {
@@ -1799,6 +1880,7 @@ function authHeaders() {
 
     renderHero(data);
     renderWindows(data);
+    renderBrowserChats();
 
     if (isBrowserOnly) {
       // Hide sections that require JSONL session data

@@ -354,6 +354,26 @@ def init_db():
         );
         CREATE INDEX IF NOT EXISTS idx_cas_account ON claude_ai_snapshots(account_id);
         CREATE INDEX IF NOT EXISTS idx_cas_polled ON claude_ai_snapshots(polled_at);
+
+        -- Browser chat-title tracking (v4.4.0). Populated by a Mac-side
+        -- collector (chat_title_sync.py) that reads history.sqlite from
+        -- Chrome/Vivaldi and POSTs to /api/browser-chats. One row per
+        -- claude.ai chat UUID. Duration is first-to-last page visit —
+        -- an under-estimate, honest limitation (no per-message timing).
+        CREATE TABLE IF NOT EXISTS browser_chat_sessions (
+            chat_uuid TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            account TEXT NOT NULL,
+            browser TEXT NOT NULL,
+            first_visit INTEGER NOT NULL,
+            last_visit INTEGER NOT NULL,
+            duration_min INTEGER NOT NULL,
+            page_visits INTEGER NOT NULL DEFAULT 1,
+            pushed_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+            cost_est_usd REAL
+        );
+        CREATE INDEX IF NOT EXISTS idx_bcs_account ON browser_chat_sessions(account);
+        CREATE INDEX IF NOT EXISTS idx_bcs_first_visit ON browser_chat_sessions(first_visit);
     """)
 
     # --- Migration: add mac_sync_mode column ---

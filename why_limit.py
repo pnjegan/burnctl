@@ -28,7 +28,10 @@ import sqlite3
 import sys
 import time
 from collections import Counter, defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+
+
+IST = timezone(timedelta(hours=5, minutes=30))
 
 
 FIVE_HOURS_SEC = 5 * 3600
@@ -397,6 +400,97 @@ def _render_browser_health():
 LONG_BROWSER_SESSION_MIN = 60
 
 
+def _render_recent_browser_chats(conn):
+    """Print the v4.4.0 'Recent Browser Chats' section.
+
+    Reads browser_chat_sessions (populated by Mac-side chat_title_sync.py).
+    Groups by account, shows the most recent 10 chats per account within
+    the last 3 days. Duration = first→last page visit — an under-estimate
+    (we don't see per-message timing). Flags:
+      > 120 min  ⚠️  (context bloat risk)
+      > 60 min   ⚠️  (long session)
+      ≤ 60 min   ✅
+    Silent if the table is empty (prints a one-line hint to run the
+    Mac collector).
+    """
+    try:
+        cur = conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master "
+            "WHERE type='table' AND name='browser_chat_sessions'"
+        )
+        if not cur.fetchone()[0]:
+            return  # table absent — old DB, silent no-op
+    except sqlite3.Error:
+        return
+
+    cutoff = int(time.time()) - 3 * 24 * 3600
+    try:
+        rows = conn.execute(
+            """
+            WITH ranked AS (
+              SELECT title, account, first_visit, duration_min,
+                     ROW_NUMBER() OVER (
+                       PARTITION BY account
+                       ORDER BY first_visit DESC
+                     ) AS rn
+              FROM browser_chat_sessions
+              WHERE first_visit > ?
+            )
+            SELECT title, account, first_visit, duration_min
+            FROM ranked
+            WHERE rn <= 10
+            ORDER BY account, first_visit DESC
+            """,
+            (cutoff,),
+        ).fetchall()
+    except sqlite3.Error:
+        return
+
+    print()
+    print(" === Recent Browser Chats (last 3 days) ===")
+
+    if not rows:
+        print(" No chat titles yet — run chat_title_sync.py on your Mac.")
+        return
+
+    # Account label lookup — friendly "Plan (account_id)" where possible.
+    # load_db() uses default row_factory (tuples), so index positionally.
+    labels = {}
+    try:
+        for aid, plan in conn.execute("SELECT account_id, plan FROM accounts"):
+            if aid:
+                labels[aid] = f"{(plan or 'unknown').title()} ({aid})"
+    except sqlite3.Error:
+        pass
+
+    grouped = defaultdict(list)
+    for row in rows:
+        title, account, first_visit, duration_min = row
+        grouped[account].append((title, first_visit, duration_min))
+
+    for account in sorted(grouped.keys()):
+        label = labels.get(account, account)
+        print()
+        print(f" Account: {label}")
+        for title, first_visit, duration_min in grouped[account]:
+            dt_ist = datetime.fromtimestamp(first_visit, tz=IST)
+            ts = dt_ist.strftime("%m-%d %H:%M")
+            dur = _fmt_duration(duration_min)
+            if duration_min > 120:
+                flag = "⚠️ "
+                note = "  context bloat risk"
+            elif duration_min > 60:
+                flag = "⚠️ "
+                note = "  long session"
+            else:
+                flag = "✅ "
+                note = ""
+            safe_title = (title or "").strip().replace('"', "'")
+            if len(safe_title) > 60:
+                safe_title = safe_title[:57] + "..."
+            print(f"   {ts} IST  {dur:>8}  {flag} \"{safe_title}\"{note}")
+
+
 def render(reveal=False):
     conn = load_db()
     if conn is None:
@@ -504,6 +598,9 @@ def render(reveal=False):
 
     # Browser session health (v4.3.0)
     _render_browser_health()
+
+    # Recent browser chat titles (v4.4.0 — populated by Mac-side collector)
+    _render_recent_browser_chats(conn)
 
     # Fix options
     print()

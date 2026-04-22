@@ -1,13 +1,14 @@
 import hmac
 import json
 import os
+import sqlite3
 import sys
 import re
 import time
 import threading
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from http.server import ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -863,13 +864,91 @@ class DashboardHandler(BaseHTTPRequestHandler):
             except Exception:
                 pass
 
+            # v4.4.0: additive recent_chats field — last 3 days, 20 max,
+            # flagged=True when duration_min > 60 (matches the dashboard +
+            # why-limit flag boundary). Fail-safe — returns [] if the table
+            # is missing or the query errors. Never breaks existing consumers.
+            recent_chats = []
+            try:
+                bconn = get_conn()
+                try:
+                    has_table = bconn.execute(
+                        "SELECT COUNT(*) FROM sqlite_master "
+                        "WHERE type='table' AND name='browser_chat_sessions'"
+                    ).fetchone()[0]
+                    if has_table:
+                        cutoff = int(time.time()) - 3 * 24 * 3600
+                        chat_rows = bconn.execute(
+                            "SELECT title, account, duration_min, first_visit "
+                            "FROM browser_chat_sessions "
+                            "WHERE first_visit > ? "
+                            "ORDER BY first_visit DESC "
+                            "LIMIT 20",
+                            (cutoff,),
+                        ).fetchall()
+                        ist = timezone(timedelta(hours=5, minutes=30))
+                        for cr in chat_rows:
+                            fv = cr["first_visit"]
+                            dm = cr["duration_min"] or 0
+                            recent_chats.append({
+                                "title": cr["title"],
+                                "account": cr["account"],
+                                "duration_min": dm,
+                                "first_visit_ist": datetime
+                                    .fromtimestamp(fv, tz=ist)
+                                    .strftime("%m-%d %H:%M"),
+                                "flagged": dm > 60,
+                            })
+                finally:
+                    bconn.close()
+            except Exception:
+                recent_chats = []
+
             self._serve_json({
                 "accounts": [dict(r) for r in rows],
                 "last_sync": last,
                 "session_summary": session_summary,
                 "combined_cost_est": combined_cost,
                 "granularity_note": granularity_note,
+                "recent_chats": recent_chats,
             })
+
+        elif path == "/api/browser-chats-recent":
+            # v4.4.0 — chat titles from Mac-side chat_title_sync.py.
+            # Most recent 20 chats in the last 3 days across all accounts.
+            conn = get_conn()
+            try:
+                has_table = conn.execute(
+                    "SELECT COUNT(*) FROM sqlite_master "
+                    "WHERE type='table' AND name='browser_chat_sessions'"
+                ).fetchone()[0]
+                if not has_table:
+                    self._serve_json({"chats": [], "total": 0})
+                    return
+                cutoff = int(time.time()) - 3 * 24 * 3600
+                rows = conn.execute(
+                    "SELECT title, account, browser, first_visit, "
+                    "       duration_min, page_visits "
+                    "FROM browser_chat_sessions "
+                    "WHERE first_visit > ? "
+                    "ORDER BY first_visit DESC "
+                    "LIMIT 20",
+                    (cutoff,),
+                ).fetchall()
+            finally:
+                conn.close()
+            chats = [
+                {
+                    "title": r["title"],
+                    "account": r["account"],
+                    "browser": r["browser"],
+                    "first_visit": r["first_visit"],
+                    "duration_min": r["duration_min"],
+                    "page_visits": r["page_visits"],
+                }
+                for r in rows
+            ]
+            self._serve_json({"chats": chats, "total": len(chats)})
 
         elif path == "/api/context-rot":
             project = params.get("project", [None])[0]
@@ -924,7 +1003,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         # /api/hooks/cost-event is localhost-bound, no-auth (Claude Code hooks
         #   are fire-and-forget shell scripts; demanding a key there is hostile).
         # All other write endpoints require X-Dashboard-Key.
-        _NO_DASH_KEY = {"/api/claude-ai/sync", "/api/hooks/cost-event"}
+        _NO_DASH_KEY = {"/api/claude-ai/sync", "/api/hooks/cost-event", "/api/browser-chats"}
         if path not in _NO_DASH_KEY and not self._require_dashboard_key():
             return
 
@@ -1237,6 +1316,75 @@ class DashboardHandler(BaseHTTPRequestHandler):
                             })
             finally:
                 conn.close()
+
+        # ── Browser chat-title ingest (v4.4.0) ──
+        # Mac-side collector (chat_title_sync.py) reads Chrome/Vivaldi
+        # history.sqlite, extracts claude.ai/chat/<uuid> rows, and POSTs
+        # them here. Localhost-only (server binds 127.0.0.1) — the Mac
+        # reaches it via SSH tunnel, same pattern as mac-sync.py.
+        elif path == "/api/browser-chats":
+            data = body or {}
+            chats = data.get("chats")
+            if not isinstance(chats, list):
+                self._serve_json({"ok": False, "error": "body.chats must be a list"}, 400)
+                return
+            required = ("chat_uuid", "title", "account", "browser",
+                        "first_visit", "last_visit", "duration_min", "page_visits")
+            rows = []
+            for i, c in enumerate(chats):
+                if not isinstance(c, dict):
+                    self._serve_json({"ok": False, "error": f"chats[{i}] is not an object"}, 400)
+                    return
+                missing = [k for k in required if c.get(k) in (None, "")]
+                if missing:
+                    self._serve_json({
+                        "ok": False,
+                        "error": f"chats[{i}] missing fields: {', '.join(missing)}",
+                    }, 400)
+                    return
+                try:
+                    rows.append((
+                        str(c["chat_uuid"]).strip(),
+                        str(c["title"]).strip(),
+                        str(c["account"]).strip(),
+                        str(c["browser"]).strip(),
+                        int(c["first_visit"]),
+                        int(c["last_visit"]),
+                        int(c["duration_min"]),
+                        int(c["page_visits"]),
+                    ))
+                except (TypeError, ValueError) as _e:
+                    self._serve_json({
+                        "ok": False,
+                        "error": f"chats[{i}] type error: {_e}",
+                    }, 400)
+                    return
+            if not rows:
+                self._serve_json({"ok": True, "upserted": 0})
+                return
+            conn = get_conn()
+            try:
+                conn.executemany(
+                    """INSERT INTO browser_chat_sessions
+                         (chat_uuid, title, account, browser,
+                          first_visit, last_visit, duration_min, page_visits)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(chat_uuid) DO UPDATE SET
+                         title = excluded.title,
+                         last_visit = excluded.last_visit,
+                         duration_min = excluded.duration_min,
+                         page_visits = excluded.page_visits,
+                         pushed_at = strftime('%s','now')""",
+                    rows,
+                )
+                conn.commit()
+            except sqlite3.Error as _e:
+                conn.rollback()
+                conn.close()
+                self._serve_json({"ok": False, "error": f"db error: {_e}"}, 500)
+                return
+            conn.close()
+            self._serve_json({"ok": True, "upserted": len(rows)})
 
         else:
             self.send_error(404)
