@@ -2013,10 +2013,16 @@ function authHeaders() {
       const mult = delta.improvement_multiplier || 1;
       const apiEq = delta.api_equivalent_savings_monthly || 0;
       if (plan === 'max' || plan === 'pro') {
-        right += '<div class="delta-line"><span class="k">waste</span> ' + waste2.before + ' → <span class="up">' + waste2.after + '</span> (' + waste2.pct_change + '%)</div>';
+        // UX-3: pattern-scoped honest display. Project-wide "waste" and
+        // "files/window" + the "API-equiv $X/mo" claim removed — the
+        // baseline is project-scoped, so multiple fixes on the same
+        // project produced identical deltas by construction.
+        const pb = (f.pattern_before !== null && f.pattern_before !== undefined) ? f.pattern_before : '—';
+        const pa = (f.pattern_after !== null && f.pattern_after !== undefined) ? f.pattern_after : '—';
+        const ppct = (f.pattern_pct_change !== null && f.pattern_pct_change !== undefined) ? ' (' + f.pattern_pct_change + '%)' : '';
+        right += '<div class="delta-line"><span class="k">' + esc(f.waste_pattern || 'waste') + ' (last 7d)</span> ' + pb + ' → <span class="up">' + pa + '</span>' + ppct + '</div>';
         right += '<div class="delta-line"><span class="k">window</span> ' + (eff.before || 0) + '% → <span class="up">' + (eff.after || 0) + '%</span></div>';
-        right += '<div class="delta-line"><span class="k">output</span> ' + (fpw.before || 0) + ' → <span class="up">' + (fpw.after || 0) + '</span> files/window</div>';
-        right += '<div class="fix-meta">Same $' + planCost.toFixed(0) + '/mo · <b>' + mult + '×</b> more output · API-equiv ~$' + apiEq.toFixed(0) + '/mo</div>';
+        right += '<div class="fix-meta">Plan: same $' + planCost.toFixed(0) + '/mo · project-level observation</div>';
       } else {
         right += '<div class="delta-line"><span class="k">cost/sess</span> ' + fmtMoney(cps.before || 0) + ' → <span class="up">' + fmtMoney(cps.after || 0) + '</span></div>';
         right += '<div class="delta-line"><span class="k">waste</span> ' + waste2.before + ' → <span class="up">' + waste2.after + '</span></div>';

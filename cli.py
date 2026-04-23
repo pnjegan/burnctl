@@ -853,8 +853,17 @@ def cmd_measure():
     print(f"  Verdict: {verdict_upper} {marker}  ({days} days, {sessions_since} sessions)")
     print()
     if plan in ("max", "pro"):
-        print(f"  Same ${plan_cost:.0f}/mo {plan.upper()} plan — {multiplier}x more output per window.")
-        print(f"  API-equivalent waste eliminated: ~${api_eq:.0f}/mo")
+        # UX-3: pattern-scoped honest framing. Project-wide ROI claim
+        # removed — baseline is project-scoped, so dollar savings can't
+        # be attributed to a single fix.
+        pb = delta.get("pattern_before")
+        pa = delta.get("pattern_after")
+        pct = delta.get("pattern_pct_change")
+        pb_s = "—" if pb is None else str(pb)
+        pa_s = "—" if pa is None else str(pa)
+        pct_s = "" if pct is None else f" ({pct}%)"
+        print(f"  {pattern} (last 7d): {pb_s} → {pa_s}{pct_s}")
+        print(f"  Plan: same ${plan_cost:.0f}/mo · project-level observation")
     else:
         print(f"  Monthly savings: ~${api_eq:.0f}/mo")
     print()

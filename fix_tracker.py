@@ -12,18 +12,24 @@ Workflow:
   4. The dashboard shows the before/after delta; a share-card endpoint
      produces a plain-text receipt the user can paste anywhere.
 
-Plan-aware framing — the module's most important contract:
+Reporting framing — the module's most important contract:
+
+  Reported metrics are pattern-scoped observations over a project
+  window, shown alongside the list of fixes applied during that
+  window. The module never claims "fix X saved $Y" — baselines are
+  project-scoped, so causal attribution to a single fix isn't
+  supportable. The relationship between fixes and outcomes is
+  correlation, not causation.
 
   * Max / Pro (flat subscription):
-      Primary metric = **window efficiency** (useful tokens / total tokens).
-      Savings are reported as "API-equivalent waste eliminated", never as
-      "you saved $X". The story is "same $100/mo plan, 2.5× more output".
+      Numbers are counts and ratios (pattern events before/after,
+      window efficiency). No dollar claim — plan cost is fixed.
   * API (pay-per-token):
-      Primary metric = **cost_usd**. Savings are real dollars. The story
-      is "spent $X less this month".
+      Dollars are real and per-request attributable. Cost-based
+      deltas are honest here in a way they can't be on flat plans.
 
-This module never conflates the two. The verdict logic, the delta JSON,
-the share card, and the CLI output all branch on `plan_type`.
+The verdict logic, delta JSON, share card, and CLI output all branch
+on `plan_type` to keep those two worlds from being conflated.
 """
 
 import json
@@ -437,6 +443,25 @@ def compute_delta(conn, fix_id, current=None):
         "improvement_multiplier": improvement_multiplier,
     }
 
+    # UX-3: pattern-scoped before/after so each fix renders its own
+    # target pattern's movement, not the project-wide waste total.
+    # Note: capture_baseline stores "cost_outlier" pattern under the
+    # plural "cost_outliers" key; compensate here. Other patterns match
+    # their key name exactly.
+    _PATTERN_KEY_MAP = {"cost_outlier": "cost_outliers"}
+    pattern = fix.get("waste_pattern") or ""
+    pattern_key = _PATTERN_KEY_MAP.get(pattern, pattern)
+    baseline_waste = baseline.get("waste_events") or {}
+    current_waste = current.get("waste_events") or {}
+    pb = baseline_waste.get(pattern_key)
+    pa = current_waste.get(pattern_key)
+    delta["pattern_before"] = pb
+    delta["pattern_after"] = pa
+    if pb and pb > 0 and pa is not None:
+        delta["pattern_pct_change"] = round((pa - pb) / pb * 100, 1)
+    else:
+        delta["pattern_pct_change"] = None
+
     verdict = determine_verdict(delta, plan_type, sessions_since)
     return delta, verdict, current
 
@@ -583,25 +608,28 @@ def build_share_card(fix, latest_measurement):
         return "\n".join(lines)
 
     delta = json.loads(latest_measurement.get("delta_json") or "{}")
+    current_metrics = json.loads(latest_measurement.get("metrics_json") or "{}")
     days = delta.get("days_elapsed", 0)
-    waste = delta.get("waste_events", {})
-    waste_before = waste.get("before", 0)
-    waste_after = waste.get("after", 0)
-    waste_pct = waste.get("pct_change", 0)
+
+    # UX-3: pattern-scoped before/after replaces project-total waste line.
+    # If pattern data isn't available (null waste_pattern, missing metrics),
+    # omit the events line entirely — public share cards should degrade
+    # gracefully rather than show "None → None".
+    pb, pa, pct = _pattern_scoped_delta(pattern, baseline, current_metrics)
 
     lines.append(f"Before → After ({days} days):")
-    lines.append(f"• {pattern_label} events: {waste_before} → {waste_after} ({_signed(waste_pct)}%)")
+    if pb is not None and pa is not None:
+        pct_s = f" ({_signed(pct)}%)" if pct is not None else ""
+        lines.append(f"• {pattern_label} events: {pb} → {pa}{pct_s}")
 
     if plan_type in ("max", "pro"):
         eff = delta.get("waste_free_ratio") or delta.get("effective_window_pct", {})
-        fpw = delta.get("files_per_window", {})
         lines.append(f"• Window efficiency: {eff.get('before', 0)}% → {eff.get('after', 0)}% useful tokens")
-        lines.append(f"• Output per window: {fpw.get('before', 0)} → {fpw.get('after', 0)} files ({_signed(fpw.get('pct_change', 0))}%)")
         lines.append("")
-        mult = delta.get("improvement_multiplier", 1.0)
-        api_eq = delta.get("api_equivalent_savings_monthly", 0)
-        lines.append(f"Same ${plan_cost:.0f}/mo plan. {mult}× more output.")
-        lines.append(f"API-equivalent waste eliminated: ~${api_eq:.0f}/mo")
+        # UX-3: project-scoped ROI claim removed. Baseline aggregates the
+        # whole project's sessions, so per-fix dollar attribution isn't
+        # supportable. Honest framing: same plan, observation only.
+        lines.append(f"Same ${plan_cost:.0f}/mo plan · project-level observation")
     else:  # api
         cps = delta.get("avg_cost_per_session", {})
         monthly = delta.get("api_equivalent_savings_monthly", 0)
@@ -621,6 +649,28 @@ def _signed(pct):
 
 # ─── Aggregation helpers used by API/CLI/UI ──────────────────────
 
+def _pattern_scoped_delta(pattern, baseline, current_metrics):
+    """UX-3: derive (pattern_before, pattern_after, pattern_pct_change)
+    from baseline_json + latest metrics_json. Keeps compute_delta's
+    additive field but also makes the values available at JSON-
+    serialize time for fixes whose stored delta_json predates UX-3."""
+    if not pattern or not baseline or not current_metrics:
+        return None, None, None
+    # Pluralization quirk: capture_baseline stores "cost_outlier" under
+    # the "cost_outliers" waste_events key.
+    _MAP = {"cost_outlier": "cost_outliers"}
+    key = _MAP.get(pattern, pattern)
+    baseline_waste = baseline.get("waste_events") or {}
+    current_waste = current_metrics.get("waste_events") or {}
+    pb = baseline_waste.get(key)
+    pa = current_waste.get(key)
+    if pb and pb > 0 and pa is not None:
+        pct = round((pa - pb) / pb * 100, 1)
+    else:
+        pct = None
+    return pb, pa, pct
+
+
 def fix_with_latest(conn, fix_id):
     """Return a fix dict with baseline parsed, measurements list, and
     a top-level `latest` measurement shortcut."""
@@ -634,6 +684,13 @@ def fix_with_latest(conn, fix_id):
         m["delta"] = json.loads(m.pop("delta_json") or "{}")
     fix["measurements"] = measurements
     fix["latest"] = measurements[-1] if measurements else None
+    pb, pa, pct = _pattern_scoped_delta(
+        fix.get("waste_pattern"), fix["baseline"],
+        fix["latest"]["metrics"] if fix["latest"] else None,
+    )
+    fix["pattern_before"] = pb
+    fix["pattern_after"] = pa
+    fix["pattern_pct_change"] = pct
     return fix
 
 
@@ -647,5 +704,12 @@ def all_fixes_with_latest(conn):
             latest["metrics"] = json.loads(latest.pop("metrics_json") or "{}")
             latest["delta"] = json.loads(latest.pop("delta_json") or "{}")
         r["latest"] = latest
+        pb, pa, pct = _pattern_scoped_delta(
+            r.get("waste_pattern"), r["baseline"],
+            latest["metrics"] if latest else None,
+        )
+        r["pattern_before"] = pb
+        r["pattern_after"] = pa
+        r["pattern_pct_change"] = pct
         out.append(r)
     return out
