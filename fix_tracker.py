@@ -469,13 +469,16 @@ def compute_delta(conn, fix_id, current=None):
 def determine_verdict(delta, plan_type, sessions_since):
     """Return 'improving' | 'worsened' | 'neutral' | 'insufficient_data'.
 
-    Plan-aware: max/pro use window efficiency as the primary signal; api
-    uses raw cost. Waste events are always a valid trigger in both modes
-    because reducing waste should help either metric.
-    """
-    if sessions_since < MIN_SESSIONS_FOR_VERDICT:
-        return "insufficient_data"
+    Directional checks run FIRST. insufficient_data is the
+    fallthrough when sessions are low AND no threshold was
+    crossed — not a pre-emptive gate. Fixes bug where fix 12
+    (waste +40%, sessions=0) was rendered as insufficient_data.
 
+    Plan-aware: max/pro use window efficiency as the primary
+    signal; api uses raw cost. Waste events are always a valid
+    trigger in both modes because reducing waste should help
+    either metric.
+    """
     waste_pct = delta["waste_events"]["pct_change"]
     if waste_pct <= -WASTE_IMPROVING_PCT:
         return "improving"
@@ -506,6 +509,9 @@ def determine_verdict(delta, plan_type, sessions_since):
         if cost_pct >= COST_WORSENED_PCT:
             return "worsened"
 
+    # Fallthrough: no threshold crossed. Low sessions = honest shrug.
+    if sessions_since < MIN_SESSIONS_FOR_VERDICT:
+        return "insufficient_data"
     return "neutral"
 
 
