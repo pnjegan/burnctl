@@ -1665,7 +1665,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
             usage = data.get("usage")
             if usage and isinstance(usage, dict):
                 insert_claude_ai_snapshot(conn, target_id, usage)
-                pct_used = usage.get("pct_used", 0)
+                pct_used = max(
+                    usage.get("pct_used", 0),
+                    usage.get("five_hour_utilization", 0),
+                    usage.get("seven_day_utilization", 0),
+                )
                 print(f"[sync] Stored usage snapshot for {target_id}: {pct_used}% used", file=sys.stderr)
 
             self._serve_json({

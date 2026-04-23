@@ -1337,7 +1337,11 @@ def insert_claude_ai_snapshot(conn, account_id, data):
          data.get("window_start") or 0, data.get("window_end") or 0,
          data.get("tokens_used", 0), data.get("tokens_limit", 0),
          data.get("messages_used", 0), data.get("messages_limit", 0),
-         data.get("pct_used", 0), data.get("plan", ""),
+         max(
+             data.get("pct_used", 0) or 0,
+             data.get("five_hour_utilization", 0) or 0,
+             data.get("seven_day_utilization", 0) or 0,
+         ), data.get("plan", ""),
          data.get("raw", ""),
          data.get("five_hour_utilization", 0),
          data.get("seven_day_utilization", 0),
