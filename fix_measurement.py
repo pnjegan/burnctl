@@ -30,7 +30,7 @@ def _ensure_schema(db):
 
 
 def start_fix(fix_description, project, db_path="data/usage.db"):
-    db = sqlite3.connect(db_path)
+    db = sqlite3.connect(f"file:{db_path}?mode=rw", uri=True)
     _ensure_schema(db)
     before = _project_stats(db, project, lookback=20)
     mid = db.execute(
@@ -50,7 +50,7 @@ def start_fix(fix_description, project, db_path="data/usage.db"):
 
 
 def check_fix(measurement_id, db_path="data/usage.db"):
-    db = sqlite3.connect(db_path)
+    db = sqlite3.connect(f"file:{db_path}?mode=rw", uri=True)
     _ensure_schema(db)
     row = db.execute(
         f"""
