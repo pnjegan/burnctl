@@ -1261,10 +1261,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 fix = get_fix(conn, fix_id)
                 if not fix:
                     self._serve_json({"success": False, "error": "fix not found"}, 404)
-                elif fix.get("status") not in ("proposed", "applied"):
+                elif fix.get("status") not in ("proposed",):
                     self._serve_json({
                         "success": False,
-                        "error": f"fix status is '{fix.get('status')}' — only 'proposed' fixes can be applied",
+                        "error": f"fix status is '{fix.get('status')}' — only 'proposed' fixes can be applied (already applied or measuring)",
                     }, 400)
                 else:
                     # Resolve target path: prefer stored applied_to_path, else re-discover
