@@ -33,6 +33,42 @@ def is_scan_running():
 BATCH_FLUSH_SIZE = 10_000
 
 
+_MAX_LINE_BYTES = 1_000_000
+
+# Populated during _scan_all_locked — reset at the start of every scan.
+# Reads + writes only happen under _scan_lock: every consumer of
+# _safe_line_iter (scan_jsonl_file, _infer_project_from_jsonl,
+# _iter_messages, extract_subagent_prompt) is invoked inside
+# _scan_all_locked. Do not mutate this set from any other code path
+# without adding explicit locking.
+#
+# We track distinct files only, not a per-line count, because the
+# same physical oversized line is seen by 3 different scan passes
+# (_infer_project_from_jsonl, scan_jsonl_file, scan_lifecycle_events)
+# — a per-trip counter inflates the user-visible number by Nx.
+_oversized_files: set = set()
+
+
+def _safe_line_iter(filepath, file_obj, start_offset=0):
+    """Yield lines from an already-open file, skipping lines
+    larger than _MAX_LINE_BYTES. Skipped lines add `filepath`
+    to the module-level _oversized_files set so a single
+    summary line can be printed at scan end instead of a
+    per-line WARNING burst.
+
+    Caller owns the open() (so it can do file_obj.tell() after
+    the loop for incremental-scan offset tracking). The helper
+    just loops and guards each line.
+    """
+    if start_offset:
+        file_obj.seek(start_offset)
+    for line in file_obj:
+        if len(line) > _MAX_LINE_BYTES:
+            _oversized_files.add(filepath)
+            continue
+        yield line
+
+
 def normalize_model(model_str):
     if not model_str:
         return "claude-sonnet"
@@ -254,7 +290,7 @@ def _infer_project_from_jsonl(filepath, max_calls=_INFER_MAX_TOOL_CALLS):
     candidates = []
     try:
         with open(filepath, "r", errors="replace") as f:
-            for line in f:
+            for line in _safe_line_iter(filepath, f):
                 line = line.strip()
                 if not line:
                     continue
@@ -388,12 +424,7 @@ def scan_jsonl_file(filepath, folder_path, conn, source_path="", project_map=Non
     added = 0
     try:
         with open(filepath, "r", errors="replace") as f:
-            if last_offset > 0:
-                f.seek(last_offset)
-            for line in f:
-                if len(line) > 1_000_000:  # 1MB max line
-                    print(f"WARNING: skipping oversized line ({len(line)} bytes) in {filepath}", file=sys.stderr)
-                    continue
+            for line in _safe_line_iter(filepath, f, start_offset=last_offset):
                 if not line.strip():
                     continue
                 new_lines += 1
@@ -428,7 +459,7 @@ def _iter_messages(filepath):
     """Yield parsed JSONL objects from a file in file order. Ignores bad JSON."""
     try:
         with open(filepath, "r", errors="replace") as f:
-            for line in f:
+            for line in _safe_line_iter(filepath, f):
                 line = line.strip()
                 if not line:
                     continue
@@ -573,7 +604,7 @@ def extract_subagent_prompt(source_path):
         return None
     try:
         with open(source_path, "r", errors="replace") as f:
-            for line in f:
+            for line in _safe_line_iter(source_path, f):
                 try:
                     obj = json.loads(line.strip())
                 except (ValueError, json.JSONDecodeError):
@@ -761,6 +792,9 @@ def scan_all(account_filter=None):
 
 def _scan_all_locked(account_filter=None):
     global _last_scan_time
+    # Reset oversized-file tracking so the summary at scan end
+    # reflects only this scan (no carryover from previous calls).
+    _oversized_files.clear()
     conn = get_conn()
     accounts = get_accounts_config(conn)
     project_map = get_project_map_config(conn)
