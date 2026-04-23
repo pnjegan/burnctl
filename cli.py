@@ -982,8 +982,8 @@ def cmd_scan_reprocess():
         cur = conn.execute(
             "UPDATE sessions SET source_path = ?, project = ?, account = ?, "
             "                     is_subagent = ?, parent_session_id = ? "
-            "WHERE session_id = ?",
-            (filepath, project, account, is_subagent, parent_sid, sid)
+            "WHERE session_id = ? AND source_path = ?",
+            (filepath, project, account, is_subagent, parent_sid, sid, filepath)
         )
         updated += cur.rowcount
         resolved_counts[project] = resolved_counts.get(project, 0) + 1
