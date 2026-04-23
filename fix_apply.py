@@ -67,6 +67,39 @@ def _is_already_applied(row):
     return bool(applied_at) or bool(applied_to_path) or status == "measuring"
 
 
+def _finalize_apply(conn, fix_id, target_path):
+    """Atomically finalize a fix apply: capture baseline, write
+    status/applied_at/applied_to_path/baseline_json in a single UPDATE.
+    Shared by CLI (apply_fix here) and HTTP (/api/fixes/:id/apply).
+
+    Raises on capture or write failure — caller is responsible for any
+    file-side rollback (e.g. restoring the CLAUDE.md backup)."""
+    import json
+    from fix_tracker import capture_baseline
+
+    # capture_baseline uses row["col"] dict-style access; ensure Row factory
+    # regardless of how the caller opened the connection (CLI load_db does
+    # not set this; server.get_conn already does).
+    conn.row_factory = sqlite3.Row
+
+    row = conn.execute(
+        "SELECT project FROM fixes WHERE id = ?", (fix_id,)
+    ).fetchone()
+    if not row:
+        raise ValueError(f"fix {fix_id} not found")
+    project = row[0]
+
+    baseline = capture_baseline(conn, project)
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+
+    conn.execute(
+        "UPDATE fixes SET status='measuring', applied_at=?, "
+        "applied_to_path=?, baseline_json=? WHERE id=?",
+        (now_ts, str(target_path), json.dumps(baseline), fix_id),
+    )
+    conn.commit()
+
+
 def apply_fix(fix_id):
     print(f"\nburnctl fix apply {fix_id}")
     print("=" * 50)
@@ -189,16 +222,10 @@ def apply_fix(fix_id):
         conn.close()
         return False
 
-    # Update DB — applied_at + applied_to_path + status='measuring'
-    now_ts = int(datetime.now(timezone.utc).timestamp())
-    cur.execute("""
-        UPDATE fixes
-        SET applied_at = ?,
-            applied_to_path = ?,
-            status = 'measuring'
-        WHERE id = ?
-    """, (now_ts, str(target_path), fid))
-    conn.commit()
+    # Update DB — unified apply finalization: captures baseline +
+    # atomically writes status/applied_at/applied_to_path/baseline_json.
+    # Same helper is called by the HTTP apply handler (server.py).
+    _finalize_apply(conn, fid, target_path)
     conn.close()
 
     print()

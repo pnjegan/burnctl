@@ -1296,19 +1296,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
                             except OSError as _e:
                                 self._serve_json({"success": False, "error": f"write failed: {_e}"}, 500)
                                 return
-                            # Update fix row — status='measuring', applied_at, path, baseline snapshot
+                            # Update fix row via shared helper — captures baseline
+                            # + atomically writes all 4 columns (status, applied_at,
+                            # applied_to_path, baseline_json). Same code path as CLI.
+                            from fix_apply import _finalize_apply
                             try:
-                                from fix_tracker import capture_baseline
-                                from datetime import datetime, timezone
-                                baseline = capture_baseline(conn, fix["project"])
-                                now_ts = int(datetime.now(timezone.utc).timestamp())
-                                conn.execute(
-                                    "UPDATE fixes SET status='measuring', applied_at=?, applied_to_path=?, baseline_json=? WHERE id=?",
-                                    (now_ts, target, json.dumps(baseline), fix_id),
-                                )
-                                conn.commit()
+                                _finalize_apply(conn, fix_id, target)
                             except Exception:
-                                update_fix_status(conn, fix_id, "measuring")
+                                # File was modified; restore from backup so DB and
+                                # file stay consistent. Best-effort — user still has
+                                # the .burnctl-backup-* file if restore fails.
+                                try:
+                                    shutil.copy2(backup, target)
+                                except Exception:
+                                    pass
+                                raise  # surface the 500; user retries
                             lines_added = block.count("\n")
                             self._serve_json({
                                 "success": True,
