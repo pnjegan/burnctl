@@ -97,6 +97,13 @@ def _detect_compaction(session_rows):
     return events
 
 
+def _to_int(v):
+    try:
+        return max(int(v or 0), 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _parse_line(line):
     """Parse a single JSONL line into a raw row dict, or None if invalid."""
     line = line.strip()
@@ -126,10 +133,10 @@ def _parse_line(line):
     if not usage:
         usage = obj.get("usage", {})
 
-    input_tokens = usage.get("input_tokens", 0) or 0
-    output_tokens = usage.get("output_tokens", 0) or 0
-    cache_read = usage.get("cache_read_input_tokens", 0) or 0
-    cache_create = usage.get("cache_creation_input_tokens", 0) or 0
+    input_tokens = _to_int(usage.get("input_tokens"))
+    output_tokens = _to_int(usage.get("output_tokens"))
+    cache_read = _to_int(usage.get("cache_read_input_tokens"))
+    cache_create = _to_int(usage.get("cache_creation_input_tokens"))
 
     if input_tokens == 0 and output_tokens == 0:
         return None
