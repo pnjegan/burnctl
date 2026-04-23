@@ -1296,17 +1296,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
                             except OSError as _e:
                                 self._serve_json({"success": False, "error": f"write failed: {_e}"}, 500)
                                 return
-                            # Update fix row — status='applied', path, baseline snapshot
+                            # Update fix row — status='measuring', applied_at, path, baseline snapshot
                             try:
                                 from fix_tracker import capture_baseline
+                                from datetime import datetime, timezone
                                 baseline = capture_baseline(conn, fix["project"])
+                                now_ts = int(datetime.now(timezone.utc).timestamp())
                                 conn.execute(
-                                    "UPDATE fixes SET status='applied', applied_to_path=?, baseline_json=? WHERE id=?",
-                                    (target, json.dumps(baseline), fix_id),
+                                    "UPDATE fixes SET status='measuring', applied_at=?, applied_to_path=?, baseline_json=? WHERE id=?",
+                                    (now_ts, target, json.dumps(baseline), fix_id),
                                 )
                                 conn.commit()
                             except Exception:
-                                update_fix_status(conn, fix_id, "applied")
+                                update_fix_status(conn, fix_id, "measuring")
                             lines_added = block.count("\n")
                             self._serve_json({
                                 "success": True,
