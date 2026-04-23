@@ -62,13 +62,13 @@ parses sessions into a SQLite DB, and surfaces:
 - **Fix tracker** — capture a baseline, apply a CLAUDE.md rule, re-measure outcomes
 - **Web dashboard** — http://localhost:8080 with charts + per-project breakdown
 
-> ccusage shows the score. burnctl changes it.
+> ccusage shows the score. burnctl shows what's moving it.
 
 ---
 
 ## Real numbers (from my own sessions)
 
-Verified from `data/usage.db` — not estimates:
+> These are detection counts from burnctl running on the maintainer's own Claude Code history. Your numbers will depend on your usage patterns.
 
 | Metric | Value |
 |---|---|
@@ -80,7 +80,6 @@ Verified from `data/usage.db` — not estimates:
 | Sessions hitting compaction | 62% |
 | Fixes applied | 9 |
 | Fixes improving | 7 |
-| Monthly saving (verified) | $1,708 |
 
 ---
 
@@ -90,6 +89,32 @@ Anthropic does **not** publish per-plan token-budget limits for the 5-hour
 block. burnctl deliberately does not invent an "X% of limit used" number,
 because making one up would mislead you. We show observed local burn and
 let you apply your own intuition.
+
+---
+
+## Supported scenarios
+
+burnctl is under active development. This is the honest state of what works today.
+
+**Works well:**
+- macOS with Claude Code, reading `~/.claude/projects/`
+- Linux with Claude Code, reading `~/.claude/projects/`
+- Local dashboard on `http://localhost:8080`
+- Fix tracking: record a fix, measure its pattern-scoped impact over days, re-measure
+
+**Works, less battle-tested:**
+- Windows via WSL2 (scanner includes the path, limited user reports)
+- Windows native (scanner has an AppData path, not end-to-end verified)
+- Remote compute setup (see Special Note below — works for the maintainer, documented for similar setups)
+- claude.ai browser session tracking (depends on endpoints that are not a documented API; may break without notice)
+
+**Not yet supported:**
+- Claude Desktop app (different usage data path)
+- Docker / Codespaces / Gitpod containers
+- Firefox / Safari / Edge / Brave / Arc for direct browser cookie sync (Chrome and Vivaldi only; `oauth_sync.py` works regardless of browser but requires Claude Code to be installed)
+- Standalone Anthropic API consumption tracking (use ccusage's API companion or Anthropic's billing dashboard)
+
+If you hit an unsupported scenario, file an issue.
 
 ---
 
@@ -104,7 +129,7 @@ let you apply your own intuition.
 | Retry-loop detection         |   ❌    |     ❌     |   ✅    |
 | Web dashboard                |   ❌    |     ❌     |   ✅    |
 | Waste-pattern detection (22 rules) |   ❌    |     ❌     |   ✅    |
-| Fix tracker (before/after)   |   ❌    |     ❌     |   ✅    |
+| Fix tracker (pattern-scoped observation)   |   ❌    |     ❌     |   ✅    |
 | Statusline hook output       |   ❌    |     ❌     |   ✅    |
 | Inferred ETA to limit        |   —    |     —      |   —    |
 
@@ -127,19 +152,44 @@ npm install -g burnctl
 burnctl dashboard
 ```
 
-### Homebrew (macOS / Linux)
-```bash
-brew tap pnjegan/burnctl
-brew install burnctl
-burnctl dashboard
-```
-
 ### Git clone
 ```bash
 git clone https://github.com/pnjegan/burnctl.git
 cd burnctl
 python3 cli.py dashboard
 ```
+
+---
+
+## Special Note: Remote compute setup
+
+If you run Claude Code on a remote machine (VPS, EC2, or other cloud instance) and SSH in from a laptop, install burnctl on the remote where Claude Code runs — not on your laptop. Your JSONL files live on the remote, and burnctl reads them there.
+
+Access the dashboard by tunneling port 8080 back to your laptop:
+
+```bash
+ssh -L 8080:localhost:8080 your-remote
+# then open http://localhost:8080 in a browser on your laptop
+```
+
+**Optional: claude.ai browser session sync.**
+
+If you also use claude.ai in a browser (separate from Claude Code) and want that usage in the same dashboard, burnctl ships a sync tool that pushes browser session data from your laptop to your remote burnctl instance.
+
+The recommended cross-platform option is `tools/oauth_sync.py`. It uses Claude Code's existing OAuth access token — not scraped browser cookies — and works on macOS, Linux, and (untested) Windows:
+
+```bash
+# On your laptop, edit VPS_IP and SYNC_TOKEN at the top of the file, then:
+python3 tools/oauth_sync.py
+```
+
+A macOS-only alternative (`tools/mac-sync.py`) reads Chrome/Vivaldi cookie stores directly via Keychain. Use it only if `oauth_sync.py` doesn't fit your setup.
+
+**Caveats for this setup:**
+
+- Sync pushes data over plain HTTP. Only safe behind an SSH tunnel or on a private network. Do not expose the sync endpoint to the public internet.
+- The sync token is a bearer credential. If it leaks, rotate it via `burnctl keys --rotate` and update your sync config.
+- Browser session sync relies on undocumented claude.ai endpoints. It works today, but may break when Anthropic updates their web app.
 
 ---
 
@@ -192,7 +242,7 @@ burnctl backup          # hot-copy DB + JSON fixes export
 burnctl fix apply 3     # auto-write fix to ~/.claude/CLAUDE.md (confirm with y)
 burnctl measure --auto  # measure all pending fixes
 burnctl fixes           # list recorded fixes + verdict
-burnctl fix-scoreboard  # full ROI proof — tokens saved, monthly saving
+burnctl fix-scoreboard  # applied fixes + observed before/after per pattern
 ```
 
 Closed loop, no copy-paste:
@@ -201,7 +251,7 @@ Closed loop, no copy-paste:
 burnctl audit          → finds waste in your sessions
 burnctl fix apply 3    → writes CLAUDE.md rule automatically
 [work normally 2-3 days]
-burnctl fix-scoreboard → shows impact, tokens saved, monthly saving
+burnctl fix-scoreboard → shows applied fixes + observed before/after per pattern
 ```
 
 Full command list: `burnctl --help`.
@@ -227,11 +277,14 @@ Then your Claude Code statusline shows live burn whenever you're working.
 
 ## Privacy
 
-- **Nothing leaves your machine.** No telemetry, no analytics, no cloud sync.
-- DB lives at `data/usage.db` (mode 0600 on Unix).
-- burnctl reads session JSONL for token counts and tool-call metadata only —
-  it does not store conversation content.
-- API keys you paste for fix-generation are stored locally in the same SQLite DB.
+**Local-only setup (most users):**
+Nothing leaves your machine. burnctl reads files from `~/.claude/projects/`, stores analysis in a local SQLite database at `data/usage.db`, and serves a dashboard on localhost. Outbound network traffic is limited to npm version checks.
+
+**Remote compute setup:**
+Your JSONL data stays on your remote. If you run `oauth_sync.py` or `mac-sync.py` (see Special Note above), those tools push claude.ai session data from your laptop to your remote burnctl instance. This is the only data that crosses machines, and only when you opt into running the sync tool.
+
+**Session credentials:**
+The sync flow stores either a session key (for cookie-based sync) or an OAuth access token (for `oauth_sync.py`) in the burnctl database on your remote. These grant access to claude.ai on your behalf — treat the burnctl database as sensitive. Rotate credentials if the database or sync token leaks.
 
 For team / cloud deployment guidance: [SECURITY.md](SECURITY.md).
 
