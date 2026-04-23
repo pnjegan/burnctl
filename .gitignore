@@ -127,3 +127,6 @@ checklists/
 .dev-cdc/
 *-audit.txt
 burnctl-complete-audit.txt
+
+# Session backup files (auto-generated during edits)
+*.bak-*
