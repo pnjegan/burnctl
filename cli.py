@@ -363,6 +363,78 @@ def _detect_from_credentials():
     return sub, email
 
 
+def _read_oauth_credentials():
+    """Re-read ~/.claude/.credentials.json for the raw claudeAiOauth block.
+    Returns the dict or None. Kept separate from _detect_from_credentials
+    so callers that need the access_token / expiresAt get the raw shape."""
+    path = os.path.expanduser("~/.claude/.credentials.json")
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    oauth = data.get("claudeAiOauth") or {}
+    return oauth or None
+
+
+def _detect_plan_two_tier():
+    """Two-tier plan detection for first-run UX.
+
+    Tier 1: _detect_from_credentials() — reads subscriptionType from
+            ~/.claude/.credentials.json. Fast, offline.
+    Tier 2: oauth_lookup.fetch_account() — GET claude.ai/api/account
+            with the Bearer token. Network call, 4s hard cap.
+
+    Returns (plan, email) — either may be None on total failure.
+    Never raises. All tier-2 errors logged to stderr with [oauth]
+    prefix so the user sees the reason but onboarding continues.
+    """
+    plan, email = _detect_from_credentials()
+    if plan and plan in PLAN_DEFAULTS:
+        return plan, email  # Tier 1 succeeded — no network call.
+
+    oauth = _read_oauth_credentials()
+    if not oauth:
+        return None, email
+    token = oauth.get("accessToken") or ""
+    if not token:
+        return None, email
+
+    # Skip the network call if the token is already expired.
+    # Claude Code stores expiresAt in milliseconds.
+    expires_at = oauth.get("expiresAt") or 0
+    if expires_at and expires_at > 1e12:
+        expires_at_sec = expires_at / 1000.0
+    else:
+        expires_at_sec = expires_at or 0
+    if expires_at_sec and expires_at_sec < time.time():
+        print(
+            "[oauth] plan auto-detect unavailable (token expired); "
+            "continuing to wizard",
+            file=sys.stderr,
+        )
+        return None, email
+
+    try:
+        from oauth_lookup import fetch_account
+    except ImportError:
+        return None, email  # module missing — silent fallthrough
+
+    api_email, _org_id, api_plan, err = fetch_account(token, timeout=4.0)
+    if err:
+        print(
+            f"[oauth] plan auto-detect unavailable ({err}); "
+            "continuing to wizard",
+            file=sys.stderr,
+        )
+        return None, email or api_email
+    if api_plan in PLAN_DEFAULTS:
+        return api_plan, email or api_email
+    return None, email or api_email
+
+
 def cmd_init():
     """Interactive first-run setup wizard. Skips questions that can be
     auto-detected from ~/.claude/.credentials.json."""
@@ -373,7 +445,7 @@ def cmd_init():
     print("  burnctl Setup", flush=True)
     print("  " + "-" * 40, flush=True)
 
-    detected_plan, detected_email = _detect_from_credentials()
+    detected_plan, detected_email = _detect_plan_two_tier()
     plan = cost = tokens = None
     name = None
     if detected_plan and detected_plan in PLAN_DEFAULTS:

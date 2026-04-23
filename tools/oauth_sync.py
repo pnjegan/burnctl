@@ -25,12 +25,19 @@ Usage:
 
 import json
 import os
-import ssl
 import subprocess
 import sys
 import time
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
+
+# Allow `python3 tools/oauth_sync.py` to still find the repo-root
+# oauth_lookup module when invoked as a plain script (not a package).
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from oauth_lookup import fetch_account, _bearer_request  # noqa: E402
 
 
 # ─── Configuration ───────────────────────────────────────────────
@@ -114,51 +121,8 @@ def collect_credentials():
 
 
 # ─── claude.ai API calls (OAuth Bearer) ──────────────────────────
-
-def _bearer_request(url, access_token, timeout=15):
-    """Authenticated GET to claude.ai using the OAuth access token.
-    Returns (data_dict, None) on success, (None, error_str) on failure."""
-    req = Request(url)
-    req.add_header("Authorization", f"Bearer {access_token}")
-    req.add_header("Accept", "application/json")
-    req.add_header("User-Agent", "burnctl-oauth-sync/1.0")
-    ctx = ssl.create_default_context()
-    try:
-        with urlopen(req, timeout=timeout, context=ctx) as resp:
-            body = resp.read().decode("utf-8", errors="replace")
-            return json.loads(body), None
-    except HTTPError as e:
-        if e.code in (401, 403):
-            return None, "expired"
-        return None, f"http_{e.code}"
-    except (URLError, OSError, json.JSONDecodeError, ValueError) as e:
-        return None, f"network_error:{type(e).__name__}"
-
-
-def fetch_account(access_token):
-    """GET /api/account → (email, org_id, plan) or (None, None, None)."""
-    data, err = _bearer_request("https://claude.ai/api/account", access_token)
-    if err or not data:
-        return None, None, None, err
-    email = data.get("email_address") or data.get("email") or ""
-    org_id = ""
-    plan = "max"
-    memberships = data.get("memberships") or data.get("organizations") or []
-    if isinstance(memberships, list) and memberships:
-        first = memberships[0]
-        org = first.get("organization") if isinstance(first, dict) else None
-        if isinstance(org, dict):
-            org_id = org.get("uuid") or ""
-            caps = org.get("capabilities") or []
-            if isinstance(caps, list):
-                joined = " ".join(str(c).lower() for c in caps)
-                if "max" in joined:
-                    plan = "max"
-                elif "pro" in joined:
-                    plan = "pro"
-        elif isinstance(first, dict):
-            org_id = first.get("uuid") or first.get("id") or ""
-    return email, org_id, plan, None
+# fetch_account + _bearer_request live in oauth_lookup.py at repo root
+# so both this script and cli.py's first-run wizard share one impl.
 
 
 def fetch_usage(access_token, org_id):
@@ -166,7 +130,9 @@ def fetch_usage(access_token, org_id):
     if not org_id:
         return None, "no_org_id"
     url = f"https://claude.ai/api/organizations/{org_id}/usage"
-    data, err = _bearer_request(url, access_token)
+    # Preserve pre-refactor 15s timeout — this script runs via cron,
+    # not an interactive wizard, so it can afford a longer wait.
+    data, err = _bearer_request(url, access_token, timeout=15)
     if err or not data:
         return None, err
 
@@ -273,7 +239,8 @@ def main():
                   file=sys.stderr)
             continue
 
-        email, org_id, plan, err = fetch_account(token)
+        # Preserve pre-refactor 15s timeout for the cron path.
+        email, org_id, plan, err = fetch_account(token, timeout=15)
         if err == "expired":
             print(f"  {src['source']}: token rejected by claude.ai "
                   "(run `claude` to refresh)", file=sys.stderr)

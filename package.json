@@ -58,6 +58,7 @@
     "fix_tracker.py",
     "insights.py",
     "mcp_server.py",
+    "oauth_lookup.py",
     "overhead_audit.py",
     "peak_hour.py",
     "resume_audit.py",
