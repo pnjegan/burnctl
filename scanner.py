@@ -799,7 +799,7 @@ def _scan_all_locked(account_filter=None):
     accounts = get_accounts_config(conn)
     project_map = get_project_map_config(conn)
     total_added = 0
-    files_scanned = 0
+    files_walked = 0
 
     for account_key, acct in accounts.items():
         if account_filter and account_key != account_filter:
@@ -813,11 +813,10 @@ def _scan_all_locked(account_filter=None):
                 for fname in files:
                     if not fname.endswith(".jsonl"):
                         continue
+                    files_walked += 1
                     filepath = os.path.join(root, fname)
                     added = scan_jsonl_file(filepath, root, conn, source_path=data_path, project_map=project_map)
                     total_added += added
-                    if added > 0:
-                        files_scanned += 1
 
     conn.commit()
 
@@ -833,7 +832,13 @@ def _scan_all_locked(account_filter=None):
 
     conn.close()
     _last_scan_time = int(time.time())
-    print(f"[scanner] Scan complete: {total_added} new rows (incremental, {files_scanned} files changed)", file=sys.stderr)
+    print(f"[scanner] Scanned {files_walked} files, {total_added} new rows added", file=sys.stderr)
+    if _oversized_files:
+        print(
+            f"[scanner] Skipped oversized content in {len(_oversized_files)} "
+            f"Claude Code file(s) (run `burnctl doctor` for details)",
+            file=sys.stderr,
+        )
     return total_added
 
 
