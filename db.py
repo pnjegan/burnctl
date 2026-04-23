@@ -281,9 +281,33 @@ def init_db():
         # fixes cannot report a truthful before/after delta — scoreboard
         # should show "baseline N/A" instead of misleading numbers.
         ("baseline_corrupted", "INTEGER DEFAULT 0"),
+        # v4.4: unix-epoch timestamp of the apply moment. Historically
+        # added lazily by fix_apply._ensure_applied_at_column on first
+        # `fix apply`; promoting to init_db so fresh DBs have the column
+        # before the backfill migration below runs.
+        ("applied_at", "INTEGER"),
     ]:
         if not _column_exists(conn, "fixes", col):
             conn.execute(f"ALTER TABLE fixes ADD COLUMN {col} {typedef}")
+
+    # --- v4.4 migration: backfill applied_at for pre-10d755e fix rows ---
+    # Fixes applied before the unified _finalize_apply (commit 10d755e) never
+    # populated applied_at. Backfill from created_at so time-based grouping
+    # (UX-3 Phase 2) has a usable field. Idempotent by the IS NULL guard —
+    # second run is a 0-row no-op, no version marker needed.
+    cur = conn.execute(
+        "UPDATE fixes "
+        "SET applied_at = created_at "
+        "WHERE applied_at IS NULL "
+        "  AND created_at IS NOT NULL "
+        "  AND status IN ('measuring', 'applied', 'confirmed')"
+    )
+    if cur.rowcount > 0:
+        import sys
+        print(
+            f"[burnctl] backfilled applied_at on {cur.rowcount} legacy fix row(s)",
+            file=sys.stderr,
+        )
 
     # --- v2-F5: MCP warning queue (bidirectional MCP) ---
     conn.executescript("""
