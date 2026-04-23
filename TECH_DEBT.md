@@ -52,3 +52,33 @@ Options for future fix:
 
 Not urgent — zero-session fixes are rare (1 of 8 in current
 live data: fix 12).
+
+### Verdict staleness on verdict-logic changes [logged 2026-04-23]
+
+`determine_verdict` output is stored in `fix_measurements.verdict`
+at write time. Dashboard reads the stored string via
+`server.py:515-522` without recomputing. CLI `fix-scoreboard`
+correctly recomputes via `compute_delta` at render time
+(`fix_scoreboard.py:122`).
+
+Impact: any change to verdict logic creates silent drift — rows
+measured under old logic keep their old verdict until re-measured.
+rc.4 hit this: fix 12 (WikiLoop repeated_reads) still rendered
+insufficient_data on the dashboard after rc.4 deployed, because
+its stored row was written under rc.3. `auto_measure_pending()`
+from the scan cron self-corrects within 5 min of next scan;
+manual kick accelerates.
+
+Options for proper fix:
+- Move verdict derivation to read-time in server.py (delete the
+  stored column dependency, always recompute from metrics_json +
+  delta_json). Trade: read-time CPU cost.
+- Keep stored column but add a 'verdict_computed_at_version'
+  column. Dashboard recomputes if stored version != current
+  burnctl version. Trade: migration + version-awareness.
+- Keep as-is, document the "re-measure after verdict logic
+  change" ritual in CHANGELOG for every future release.
+
+Not urgent — cron self-corrects. But every future verdict logic
+change will re-hit this bug. Pick an approach before the next
+verdict change.
