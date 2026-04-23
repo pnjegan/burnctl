@@ -314,9 +314,13 @@ def is_anomalous_pct_change(before, after):
     return raw < _PCT_CHANGE_MIN or raw > _PCT_CHANGE_MAX
 
 
-def compute_delta(conn, fix_id):
+def compute_delta(conn, fix_id, current=None):
     """Capture current metrics for the fixed project, diff against baseline,
-    assign a verdict, return (delta_json, verdict, current_metrics)."""
+    assign a verdict, return (delta_json, verdict, current_metrics).
+
+    When `current` is None (default), capture a fresh snapshot live. When a
+    dict is passed (same shape as capture_baseline's return), use it as-is
+    — point-in-time rendering for callers that need render stability."""
     fix = get_fix(conn, fix_id)
     if not fix:
         return None, "not_found", None
@@ -328,11 +332,12 @@ def compute_delta(conn, fix_id):
     # BUG 1 fix: current snapshot must be scoped to sessions AFTER the fix
     # was recorded, not "last 7 days" of the project — otherwise every fix
     # for the same project returns identical numbers.
-    current = capture_baseline(
-        conn, project,
-        days_window=baseline.get("days_window", 7),
-        since_override=fix["created_at"] or 0,
-    )
+    if current is None:
+        current = capture_baseline(
+            conn, project,
+            days_window=baseline.get("days_window", 7),
+            since_override=fix["created_at"] or 0,
+        )
 
     # Sessions since the fix was recorded (ANY row belonging to a session_id
     # with a timestamp after fix.created_at)

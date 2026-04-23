@@ -30,7 +30,9 @@ def load_db():
     ]
     for p in candidates:
         if os.path.exists(p):
-            return sqlite3.connect(p)
+            conn = sqlite3.connect(p)
+            conn.row_factory = sqlite3.Row
+            return conn
     return None
 
 
@@ -48,7 +50,8 @@ def run_fix_scoreboard():
     print("burnctl fix-scoreboard")
     print("=" * 64)
     print("The detect → fix → measure → prove loop.")
-    print("ccusage shows spend. burnctl proves ROI.\n")
+    print("ccusage shows spend. burnctl proves ROI.")
+    print("Reported as-of last measurement per fix.\n")
 
     conn = load_db()
     if not conn:
@@ -60,10 +63,13 @@ def run_fix_scoreboard():
 
     # Pull latest measurement per fix so each fix shows once.
     # Note: real schema has `created_at` (no `applied_at`); we use that.
+    # Fix F (CORR-10/11): also pull latest metrics_json so the render can
+    # re-derive delta from a point-in-time snapshot instead of re-capturing
+    # live — keeps headline values stable between renders.
     cur.execute("""
         SELECT
           f.id, f.project, f.waste_pattern, f.status, f.created_at,
-          fm.verdict, fm.delta_json, fm.measured_at,
+          fm.verdict, fm.delta_json, fm.measured_at, fm.metrics_json,
           COALESCE(f.baseline_corrupted, 0) AS baseline_corrupted
         FROM fixes f
         LEFT JOIN fix_measurements fm
@@ -90,16 +96,33 @@ def run_fix_scoreboard():
     print(f"{'#':<4} {'Project':<14} {'Pattern':<22} {'Verdict':<13} Impact")
     print("-" * 78)
 
-    baseline_corrupt_count = 0
-    for (fid, proj, pattern, status, created_at,
-         verdict, delta_json, measured_at, baseline_corrupted) in fixes:
+    from fix_tracker import compute_delta
 
-        delta = {}
-        if delta_json:
-            try:
-                delta = json.loads(delta_json)
-            except (json.JSONDecodeError, TypeError):
-                delta = {}
+    baseline_corrupt_count = 0
+    skipped_no_measurement = 0
+    for (fid, proj, pattern, status, created_at,
+         verdict, delta_json, measured_at, metrics_json,
+         baseline_corrupted) in fixes:
+
+        # Fix F: skip fixes with no measurement yet — cannot render a
+        # point-in-time delta without stored metrics_json.
+        if metrics_json is None:
+            skipped_no_measurement += 1
+            continue
+
+        try:
+            current_metrics = json.loads(metrics_json)
+        except (json.JSONDecodeError, TypeError):
+            skipped_no_measurement += 1
+            continue
+
+        # Re-derive delta + verdict at render time from the stored
+        # point-in-time snapshot. This replaces reading fm.delta_json so
+        # the headline is stable between renders (no live capture drift).
+        delta, verdict, _ = compute_delta(conn, fid, current=current_metrics)
+        if delta is None:
+            skipped_no_measurement += 1
+            continue
 
         tokens_saved = int(delta.get("tokens_saved") or 0)
         monthly_savings = float(delta.get("api_equivalent_savings_monthly") or 0)
