@@ -28,3 +28,27 @@ silent tier-1 detection failure; they currently survive via tier-2
 network call. Fix: replace expanduser calls with env-var-aware helper,
 update CREDENTIALS_PATHS in oauth_sync.py. Defer until after
 rc.4 (Phase 4) and rc.5 (Keychain).
+
+---
+
+## Verdict measurement
+
+### Zero-session waste_events verdict [logged 2026-04-23]
+
+fix_measurements rows with sessions_count=0 can still produce
+non-trivial delta.waste_events.pct_change because waste events
+fire from non-session triggers (background scans, cron sync).
+Verdict code will correctly return "worsened" or "improving"
+based on the numeric delta — but a user reading "worsened" for
+a project they haven't touched in weeks may find it misleading.
+
+Options for future fix:
+- Tag the delta with a "measurement_confidence" score based on
+  sessions_since and render a faded card in the UI
+- Require sessions_since >= N before trusting waste_events
+  deltas (separately from the sessions gate on verdict)
+- Exclude non-session-triggered waste events from the
+  post-fix count
+
+Not urgent — zero-session fixes are rare (1 of 8 in current
+live data: fix 12).
