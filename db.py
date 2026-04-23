@@ -1274,14 +1274,37 @@ def insert_insight(conn, account, project, insight_type, message, detail_json="{
 
 
 def get_insights(conn, account=None, dismissed=0, limit=50):
+    """Return insights de-duplicated on (insight_type, project, message).
+
+    The debounce/GC asymmetry in insights.py (12h debounce vs
+    24h GC) lets 1-2 rows coexist per (type, project, message)
+    tuple. Collapse to the most recent row.
+
+    Key deliberately includes message so window_risk snapshots
+    (which differ by numeric text — '48%' vs '39%') survive as
+    distinct cards. True text-identical duplicates collapse.
+    """
     sql = "SELECT * FROM insights WHERE dismissed = ?"
     params = [dismissed]
     if account and account != "all":
         sql += " AND (account = ? OR account = 'all' OR account IS NULL OR account = '')"
         params.append(account)
     sql += " ORDER BY created_at DESC LIMIT ?"
-    params.append(limit)
-    return conn.execute(sql, params).fetchall()
+    params.append(limit * 2)  # over-fetch so dedup still yields `limit`
+
+    rows = conn.execute(sql, params).fetchall()
+
+    seen = set()
+    deduped = []
+    for row in rows:
+        key = (row["insight_type"], row["project"], row["message"])
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+        if len(deduped) >= limit:
+            break
+    return deduped
 
 
 def dismiss_insight(conn, insight_id):
