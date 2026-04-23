@@ -1,18 +1,47 @@
-tools/get-derived-keys.py
-tools/oauth_sync.py
-tools/mac-sync.py
-tools/sync-daemon.py
-burnctl_test_runner.py
+# Backup files (auto-generated during edits)
+*.bak-*
+*.bak
+
+# Development / audit artifacts (internal only, never for users)
+audit-reports/
+qa-reports/
+research-reports/
+
+# Session and scratch files (internal)
+session-*
+plan-*
+NOTES.*
+SCRATCH.*
+drafts/
+briefings/
+
+# Internal docs
+CLAUDE.md
+MEMORY.md
+BURNCTL_MASTER_DOC*.md
+
+# Python caches and test artifacts
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Logs
+*.log
+
+# Environment / secrets (defense in depth — these should never
+# exist but if they do, don't ship them)
+.env
+.env.*
+
+# Git metadata (npm auto-excludes .git/ but belt-and-braces)
+.gitignore
+
+# Backup database files / dumps (user data — must never ship)
 data/
 *.db
-*.log
-*.pid
-.claude/
-docs/
-CHANGELOG.md
-MEMORY.md
-INTERNALS.md
-*.md
-!README.md
-!CONTRIBUTING.md
-!LICENSE
+*.db-wal
+*.db-shm
+
+# Dev-only scripts that shouldn't be in the tarball
+deploy.sh

@@ -69,8 +69,9 @@
     "waste_patterns.py",
     "work_timeline.py",
     "why_limit.py",
-    "templates/",
+    "templates/*.html",
     "tools/hooks/",
+    "tools/*.py",
     "CONTRIBUTING.md",
     "LICENSE",
     "README.md"
