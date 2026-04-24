@@ -7,7 +7,10 @@ from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 
 from config import MODEL_PRICING, COST_TARGETS
-from db import get_conn, insert_insight, get_insights, get_accounts_config, get_project_map_config
+from db import (
+    get_conn, insert_insight, get_insights, get_accounts_config, get_project_map_config,
+    get_baseline_readings, get_latest_baseline, get_previous_baseline,
+)
 from analyzer import (
     account_metrics, window_metrics, project_metrics,
     compaction_metrics, model_rightsizing,
@@ -666,6 +669,165 @@ def generate_insights(conn=None):
             generated += 1
     except Exception:
         pass
+
+    # === BASELINE / SOS INSIGHTS (v4.5.0) ===
+    # Baseline overhead rules consume from baseline_readings. They use
+    # _insight_exists_recent() like the other rules above and never touch
+    # session data directly.
+    #
+    # Cost model: ~$3.00 per 1M input-cache-write tokens (Sonnet mid-band,
+    # matches overhead_audit.py). Monthly projection assumes ~30 sessions/mo
+    # (one session per day) as a conservative floor. Upgrade when we
+    # introduce a per-user session-rate signal.
+    _BASELINE_PRICE_PER_TOKEN = 3.0 / 1_000_000
+    _MONTHLY_SESSIONS = 30
+
+    try:
+        latest = get_latest_baseline(conn=conn)
+        prev = get_previous_baseline(conn=conn)
+        readings = get_baseline_readings(days=14, conn=conn)
+    except Exception:
+        latest, prev, readings = None, None, []
+
+    # ── Rule: baseline_sos_spike ──
+    # Fires when latest baseline > 20% higher than previous.
+    if latest and prev and prev.get("total_tokens"):
+        delta_tokens = latest["total_tokens"] - prev["total_tokens"]
+        if delta_tokens > 0:
+            delta_pct = (delta_tokens / prev["total_tokens"]) * 100.0
+            if delta_pct >= 20.0:
+                if not _insight_exists_recent(conn, "baseline_sos_spike", "baseline", hours=24):
+                    prev_names = {s.get("name") for s in prev.get("sources", [])}
+                    new_sources = [s.get("name") for s in latest.get("sources", [])
+                                   if s.get("name") not in prev_names]
+                    delta_usd_monthly = delta_tokens * _BASELINE_PRICE_PER_TOKEN * _MONTHLY_SESSIONS
+                    severity = "critical" if delta_pct > 40.0 else "warning"
+                    msg = (
+                        f"Baseline overhead jumped {delta_pct:.0f}% since last session "
+                        f"(+{delta_tokens:,} tokens, ~${delta_usd_monthly:.2f}/mo)."
+                    )
+                    if new_sources:
+                        msg += f" New sources: {', '.join(new_sources[:3])}"
+                        if len(new_sources) > 3:
+                            msg += f" (+{len(new_sources)-3} more)"
+                    detail = json.dumps({
+                        "delta_tokens": delta_tokens,
+                        "delta_pct": round(delta_pct, 2),
+                        "delta_usd_monthly": round(delta_usd_monthly, 2),
+                        "new_sources": new_sources,
+                        "severity": severity,
+                    })
+                    insert_insight(conn, "all", "baseline",
+                                   "baseline_sos_spike", msg, detail)
+                    generated += 1
+
+    # ── Rule: baseline_dod_growing ──
+    # Fires when 7-day baseline trend has positive slope (monotonic enough).
+    if readings and len(readings) >= 3:
+        # readings are newest-first; reverse for chronological slope
+        chrono = list(reversed(readings[:7]))
+        if len(chrono) >= 3:
+            first = chrono[0]["total_tokens"] or 0
+            last = chrono[-1]["total_tokens"] or 0
+            if first > 0 and last > first:
+                growth_pct = ((last - first) / first) * 100.0
+                # Require at least 5% growth to fire (noise floor)
+                if growth_pct >= 5.0:
+                    if not _insight_exists_recent(conn, "baseline_dod_growing", "baseline", hours=24):
+                        msg = (
+                            f"Baseline overhead has grown {growth_pct:.0f}% over the "
+                            f"last {len(chrono)} days. Review recently added "
+                            f"agents/skills/MCPs."
+                        )
+                        detail = json.dumps({
+                            "total_growth_pct": round(growth_pct, 2),
+                            "days": len(chrono),
+                            "first_tokens": first,
+                            "last_tokens": last,
+                        })
+                        insert_insight(conn, "all", "baseline",
+                                       "baseline_dod_growing", msg, detail)
+                        generated += 1
+
+    # ── Rule: dead_overhead_source ──
+    # A source has been in baseline for 7+ days but never appears in session project paths.
+    if readings and len(readings) >= 7 and latest:
+        # collect names that appeared in every one of the last 7 readings
+        stable_names = None
+        for r in readings[:7]:
+            names = {s.get("name") for s in (r.get("sources") or []) if s.get("name")}
+            stable_names = names if stable_names is None else (stable_names & names)
+        stable_names = stable_names or set()
+        # Names seen in project paths (session-level proxy). Subagent invocations
+        # log agent names into session.project / waste_events.project too.
+        try:
+            known = {row[0] for row in conn.execute(
+                "SELECT DISTINCT project FROM sessions WHERE project IS NOT NULL"
+            ).fetchall()}
+        except Exception:
+            known = set()
+        latest_by_name = {s.get("name"): s for s in latest.get("sources", [])}
+        for name in sorted(stable_names):
+            if not name or name in known:
+                continue
+            src = latest_by_name.get(name)
+            if not src:
+                continue
+            # Only fire for agents / skills / mcps (claudemd is always used)
+            if src.get("type") == "claudemd":
+                continue
+            # Keyword match: any session.project name contains this source name?
+            if any(name and name in (k or "") for k in known):
+                continue
+            if _insight_exists_recent(conn, "dead_overhead_source", name, hours=48):
+                continue
+            tokens = int(src.get("tokens") or 0)
+            usd_monthly = tokens * _BASELINE_PRICE_PER_TOKEN * _MONTHLY_SESSIONS
+            msg = (
+                f"'{name}' ({src.get('type')}) has been in your context overhead for "
+                f"7+ days but appears unused. Removing it saves ~{tokens:,} tokens/session "
+                f"(~${usd_monthly:.2f}/mo)."
+            )
+            detail = json.dumps({
+                "name": name,
+                "type": src.get("type"),
+                "tokens": tokens,
+                "usd_monthly": round(usd_monthly, 2),
+                "suggested_action": "disable",
+                "path": src.get("path"),
+            })
+            insert_insight(conn, "all", name,
+                           "dead_overhead_source", msg, detail)
+            generated += 1
+
+    # ── Rule: claudemd_bloat ──
+    # Any CLAUDE.md source exceeds 2000 tokens.
+    if latest:
+        total_baseline = max(int(latest.get("total_tokens") or 0), 1)
+        for src in latest.get("sources", []):
+            if src.get("type") != "claudemd":
+                continue
+            tokens = int(src.get("tokens") or 0)
+            if tokens < 2000:
+                continue
+            key = src.get("path") or src.get("name") or "claudemd"
+            if _insight_exists_recent(conn, "claudemd_bloat", key, hours=48):
+                continue
+            pct = (tokens / total_baseline) * 100.0
+            msg = (
+                f"CLAUDE.md at {key} is {tokens:,} tokens "
+                f"({pct:.0f}% of your baseline overhead). "
+                f"Consider splitting into project-specific files."
+            )
+            detail = json.dumps({
+                "path": src.get("path"),
+                "tokens": tokens,
+                "pct_of_baseline": round(pct, 2),
+                "threshold": 2000,
+            })
+            insert_insight(conn, "all", key,
+                           "claudemd_bloat", msg, detail)
+            generated += 1
 
     conn.commit()
     if should_close:

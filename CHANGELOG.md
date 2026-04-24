@@ -1,5 +1,47 @@
 # burnctl — Changelog (continued from claudash v3.x)
 
+## v4.5.0 — Intelligence Layer (2026-04-24)
+
+### New
+- `burnctl daily` CLI command — daily brief with overhead, burn, recommendations, trends.
+- Baseline overhead scanning (`baseline_scanner.py`) — agents, skills, MCPs, and
+  CLAUDE.md files tokenised and tracked per day. Uses tiktoken (cl100k_base)
+  when available, falls back to `len(text) * 0.25` otherwise.
+- `baseline_readings` DB table — time-series overhead snapshots (one row
+  per UTC day, latest wins).
+- `/api/daily` endpoint — JSON daily brief consumed by the dashboard.
+- `templates/dashboard.html` — new "Daily brief" card at the top of the
+  dashboard, loads via `fetch('/api/daily')` on page open. Read-only in
+  v4.5.0 (no action buttons yet — planned for v4.6).
+- `daily_report.py` — single source of truth for the daily brief, used by
+  both the CLI and the API.
+
+### Extended
+- `insights.py` — 4 new baseline rules: `baseline_sos_spike`,
+  `baseline_dod_growing`, `dead_overhead_source`, `claudemd_bloat`.
+  Existing 22 rules untouched.
+- `scanner.py` — end-of-scan now (a) captures a baseline reading once per
+  UTC day and (b) auto-populates `daily_snapshots` for today, per
+  (account, project). Both wrapped in try/except — neither can break the
+  main JSONL scan.
+
+### Deps
+- `requirements.txt` — tiktoken listed as an *optional* dependency. Core
+  burnctl remains zero-pip-dependency; baseline scanner falls back to
+  char approximation if tiktoken is not installed.
+
+### Not changed (by design)
+- insights.py — existing 22 rules left alone; v4.5.0 only appends.
+- Fix outcome loop (`scanner.py` auto_measure_fixes) — untouched.
+- `fix_measurement.py` — untouched.
+- JSONL reading logic — untouched.
+- `tools/mac-sync.py`, `tools/oauth_sync.py` — untouched.
+
+### Migration
+- Additive only: new `baseline_readings` table created via
+  `CREATE TABLE IF NOT EXISTS` on the next `init_db()` call. No existing
+  columns renamed or dropped. Safe against existing databases.
+
 ## [2026-04-22] Session 36 — six-dimension parallel audit against v4.3.0 (commit ec7421b)
 
 ### Fixed
@@ -2403,3 +2445,80 @@ Note: previous Session 28 entry in this log covers README/logo work from earlier
 - Performance and Security reports were produced by parallel sessions; this session consumed them as prior-work context only.
 - `audit-reports/` directory status w.r.t. git is unchecked; whether the `.md` reports should be committed is a coordinator decision.
 - Fix for Brainworks, `$1,708/mo` formula, `/api/fixes/:id/apply` double-apply, string-token crash, and IST timezone hardcoding all deferred — each has file:line + reproducer + suggested diff in the relevant audit report.
+
+## [2026-04-23] Session 38 — rc.4 Phase 4: verdict + insight dedup (v4.4.0-rc.4)
+
+### Fixed
+- **Verdict lie: "insufficient_data" was early-returning when `sessions_since < MIN_SESSIONS_FOR_VERDICT`** (`fix_tracker.determine_verdict` — `fix_tracker.py:476-477` pre-fix). The gate sat above every directional check, so a fix with clear waste/cost signal but low session count was mislabeled. Gate moved to a fallthrough after directional checks.
+  Live repro: fix 12 (WikiLoop / repeated_reads, `sessions_count=0`, `delta.waste_events.pct_change=+40%`) rendered `insufficient_data` on the dashboard; now correctly renders `worsened` end-to-end.
+  Why: Bug 1 of Phase 4 audit — verdict was silently lying on any project with sparse post-fix activity.
+  Files: `fix_tracker.py:469-511`, `tests/test_verdict_sessions_gate.py` (5 new cases).
+
+- **Insight duplication: dashboard rendered same insight twice per (type, project)** — `insights.py` has a 12 h debounce (`_insight_exists_recent`) vs a 24 h GC window (`_clear_stale_insights`), so 1-2 rows naturally coexist per tuple. Render-time dedup added at the API layer (`db.get_insights`) on key `(insight_type, project, message)`.
+  Live repro: 4 `(type, project)` pairs had 2 rows in the live DB pre-fix (multi_compact_churn, model_waste, repeated_reads_project, window_risk each for multiple projects); dashboard rendered each as two cards. Post-fix: 0 exact duplicates returned; snapshot-style insights whose text differs (e.g. `window_risk` "48 %" vs "39 %") correctly survive as distinct cards.
+  Why: Bug 2 of Phase 4 audit.
+  Files: `db.py:1276-1307`, `tests/test_insight_dedup.py` (6 new cases).
+
+### Added
+- **`TECH_DEBT.md`** at repo root — first technical-debt ledger. 4 entries logged this session:
+  - `tools/oauth_sync.py` subprocess hang risk (no `timeout=` on `security find-generic-password`).
+  - `$CLAUDE_CONFIG_DIR` not respected repo-wide (two hardcoded paths in `cli.py`, three in `tools/oauth_sync.py`).
+  - Zero-session `waste_events` verdict concern (a fix with `sessions_count=0` can still produce a directional verdict from non-session waste triggers — technically correct, potentially misleading UX).
+  - **Verdict staleness gap** (see Architecture Decisions below).
+  Files: `TECH_DEBT.md` (new).
+
+- **11 new unit tests on previously-untested code paths**:
+  - `tests/test_verdict_sessions_gate.py` (5 tests): covers the gate reorder, including the fix-12 repro, plan-aware (`api`) branch, and the honest-shrug fallthrough.
+  - `tests/test_insight_dedup.py` (6 tests): covers text-identical collapse, most-recent preservation, snapshot-distinct messages surviving, limit-honoring, and empty/single edge cases.
+  Why: neither `determine_verdict` nor `get_insights` had any test coverage before today; the bugs we fixed today would have been caught by these tests if they'd existed.
+  Files: `tests/test_verdict_sessions_gate.py`, `tests/test_insight_dedup.py`.
+
+### Removed
+- (none)
+
+### Architecture Decisions
+- **Dedup at the API layer (`db.get_insights`), not at the producer.** `insights.generate_insights` keeps its 12 h debounce / 24 h GC asymmetry; render-time dedup collapses the 1-2 coexisting rows per tuple transparently. Tradeoff: future renderers that go directly to the `insights` table bypass the dedup — acceptable because the API is the canonical read path.
+  Why: fixes the visible bug without touching the producer's debounce/GC math, which has separate implications (user-dismissal visibility, cron idempotency) that weren't part of this scope.
+  Impact: future dedup-strategy changes live in one function, not 22 rules.
+
+- **Verdict staleness gap** (logged to `TECH_DEBT.md`). `determine_verdict` output is **stored** in `fix_measurements.verdict` at write time; `server.py:515-522` (dashboard API) reads the stored column; `fix_scoreboard.py:122` (CLI) re-derives via `compute_delta` at render time. Any change to verdict logic creates silent drift between CLI and dashboard until rows are re-measured. rc.4 hit this live — fix 12's stored row was `insufficient_data` under rc.3 logic and stayed that way on the dashboard after rc.4 deployed, despite the CLI already showing `worsened`.
+  Why: flagged as architectural debt, not fixed in rc.4 — three mitigation options laid out in `TECH_DEBT.md`; operator picks before next verdict logic change.
+  Impact: established the operational ritual "after any verdict logic change, kick `auto_measure_pending()` or wait <=5 min for the scan cron to self-correct."
+
+- **Gate reorder (Option 1 as-spec), not zero-session special-case (Option 2).** P3 smoke test revealed `fix_measurements.metrics_json` and `delta_json` have different shapes; `determine_verdict` reads `delta_json` which had `waste_events.pct_change = 40.0` fully populated for fix 12. The bug was purely about gate ordering, unrelated to zero-session measurement semantics.
+  Why: keeping the two concerns separate kept the rc.4 surface tight; zero-session UX framing is its own TECH_DEBT entry for a future release.
+  Impact: rc.4 diff is 4 commits on branch (plus 2 docs commits on main), not a wider refactor.
+
+### Verified end-to-end
+- `auto_measure_pending()` manually kicked post-deploy — 3 measuring-status fixes re-measured, verdicts: **fix 11 improving, fix 12 worsened, fix 14 improving**. Fix 12's flip from `insufficient_data` -> `worsened` confirms rc.4 logic runs through the full write path (not just the CLI re-derive).
+- 41/41 tests green under `python3 -m unittest discover -s tests`. 30 pre-existing (from Session 37's clean-Mac UX work) + 11 new this session.
+- Dashboard `/api/health` reports `"version": "4.4.0-rc.4"`; pm2 banner shows `v4.4.0-rc.3 -> v4.4.0-rc.4` bounce.
+- GitHub tag `v4.4.0-rc.4` published, raw-content check confirms `package.json` on the tag is rc.4.
+
+### Deploy
+- Branch `fix/phase4-verdict-dedup` merged to main via `--no-ff` (merge commit `d65560f`). Closable.
+- Tag `v4.4.0-rc.4` at `d65560f` pushed to origin.
+- Post-release docs commit `8a86981` on main (verdict staleness entry) — intentionally not re-tagged.
+- pm2 bounced. `/api/health` returns `"version": "4.4.0-rc.4"`.
+
+### Commits this session (chronological on main)
+```
+a8ca65b docs: log oauth_sync timeout + CLAUDE_CONFIG_DIR to TECH_DEBT
+18b2e48 docs: log zero-session verdict confidence concern to TECH_DEBT
+24f7b79 fix(verdict): run directional checks before sessions gate
+90f828f fix(insights): dedup on (type, project, message)
+b50bac0 chore: bump to 4.4.0-rc.4
+d65560f merge: rc.4 verdict + dedup fixes                                        <- tag: v4.4.0-rc.4
+8a86981 docs: log verdict staleness architectural gap to TECH_DEBT               <- post-release
+```
+
+### Known Issues / Not Done
+- **`fix/phase4-verdict-dedup` branch** still exists locally. Safe to delete via `git branch -d fix/phase4-verdict-dedup` (the `-d` refuses if unmerged; `--no-ff` guarantees the merge commit contains all branch work).
+- **Two stashes parked on main**:
+  - `stash@{0}: On main: session37-done-entry-wip` — Session 37 CHANGELOG append from earlier today (clean-Mac UX + applied_at backfill). Never committed.
+  - `stash@{1}: On main: ux3-state2-changelog-wip` — older CHANGELOG draft (Session 39/37/41 entries from pre-session work).
+  Popping either one will conflict with today's Session 38 append; reconciliation is operator's call.
+- **Session numbering drift**: committed CHANGELOG ends at Session 36; this is Session 38; the stashed Session 37 is sandwiched between. If `stash@{0}` is later popped, the sequence becomes 36 -> 37 -> 38 chronologically. No action needed now.
+- **Verdict staleness gap** deferred to separate fix (see `TECH_DEBT.md`). Mitigation in place: cron self-corrects every 5 min, manual `auto_measure_pending()` kicks immediately.
+- **Zero-session UX framing** for `waste_events` verdicts deferred (`TECH_DEBT.md`). Fix 12 currently renders `worsened` despite zero post-apply sessions — numerically honest but potentially misleading.
+- **No `npm publish`** this session. Release is GitHub-tag-only (rc.4 is a release candidate, not a stable release). Deploy surface limited to this VPS + pm2 restart.

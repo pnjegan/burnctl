@@ -191,6 +191,17 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_insights_created ON insights(created_at);
         CREATE INDEX IF NOT EXISTS idx_insights_account ON insights(account);
         CREATE INDEX IF NOT EXISTS idx_insights_type ON insights(insight_type);
+
+        -- v4.5.0: baseline overhead snapshots (agents, skills, MCPs, CLAUDE.md)
+        CREATE TABLE IF NOT EXISTS baseline_readings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            total_tokens INTEGER NOT NULL,
+            sources_json TEXT NOT NULL,
+            snapshot_date TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_baseline_date
+            ON baseline_readings(snapshot_date);
     """)
 
     # --- Account management tables ---
@@ -1240,6 +1251,109 @@ def get_daily_snapshots(conn, account=None, days=7):
         params.append(account)
     sql += " ORDER BY date"
     return conn.execute(sql, params).fetchall()
+
+
+# --- Baseline overhead readings (v4.5.0) ---
+
+def insert_baseline_reading(timestamp, total_tokens, sources, conn=None):
+    """Insert a new baseline reading. Returns the row id.
+
+    timestamp: ISO-8601 string (from baseline_scanner.scan_baseline)
+    total_tokens: int — sum of per-source token counts
+    sources: list[dict] — will be json-serialised into sources_json
+    conn: optional connection; opens one if not provided
+    """
+    own = conn is None
+    if own:
+        conn = get_conn()
+    try:
+        snapshot_date = (timestamp or "")[:10]  # YYYY-MM-DD
+        cur = conn.execute(
+            """INSERT INTO baseline_readings
+               (timestamp, total_tokens, sources_json, snapshot_date)
+               VALUES (?, ?, ?, ?)""",
+            (timestamp, int(total_tokens or 0), json.dumps(sources or []), snapshot_date),
+        )
+        if own:
+            conn.commit()
+        return cur.lastrowid
+    finally:
+        if own:
+            conn.close()
+
+
+def _row_to_baseline_dict(row):
+    if row is None:
+        return None
+    try:
+        sources = json.loads(row["sources_json"]) if row["sources_json"] else []
+    except (ValueError, TypeError):
+        sources = []
+    return {
+        "id": row["id"],
+        "timestamp": row["timestamp"],
+        "total_tokens": row["total_tokens"],
+        "snapshot_date": row["snapshot_date"],
+        "sources": sources,
+    }
+
+
+def get_baseline_readings(days=14, conn=None):
+    """Return up to `days` baseline readings (one per day, latest per day),
+    newest first. Empty list if table has no rows."""
+    own = conn is None
+    if own:
+        conn = get_conn()
+    try:
+        rows = conn.execute(
+            """SELECT id, timestamp, total_tokens, sources_json, snapshot_date
+               FROM baseline_readings br1
+               WHERE id = (
+                 SELECT MAX(id) FROM baseline_readings br2
+                 WHERE br2.snapshot_date = br1.snapshot_date
+               )
+               ORDER BY snapshot_date DESC
+               LIMIT ?""",
+            (int(days),),
+        ).fetchall()
+        return [_row_to_baseline_dict(r) for r in rows]
+    finally:
+        if own:
+            conn.close()
+
+
+def get_latest_baseline(conn=None):
+    """Most recent baseline reading as a dict, or None."""
+    own = conn is None
+    if own:
+        conn = get_conn()
+    try:
+        row = conn.execute(
+            """SELECT id, timestamp, total_tokens, sources_json, snapshot_date
+               FROM baseline_readings
+               ORDER BY id DESC LIMIT 1"""
+        ).fetchone()
+        return _row_to_baseline_dict(row)
+    finally:
+        if own:
+            conn.close()
+
+
+def get_previous_baseline(conn=None):
+    """Second-most-recent baseline reading (for SOS delta), or None."""
+    own = conn is None
+    if own:
+        conn = get_conn()
+    try:
+        row = conn.execute(
+            """SELECT id, timestamp, total_tokens, sources_json, snapshot_date
+               FROM baseline_readings
+               ORDER BY id DESC LIMIT 1 OFFSET 1"""
+        ).fetchone()
+        return _row_to_baseline_dict(row)
+    finally:
+        if own:
+            conn.close()
 
 
 # --- Window burns ---

@@ -1,6 +1,10 @@
-# burnctl has zero pip dependencies.
-# All modules used are Python standard library.
+# burnctl core has zero required pip dependencies.
+# All core modules use Python standard library.
 # Python 3.8+ required.
 #
 # To verify: python3 --version
 # To start:  python3 cli.py dashboard
+#
+# Optional dependencies (baseline overhead scanner uses these if available,
+# falls back to char-based token approximation otherwise):
+tiktoken>=0.5.0  # optional — falls back to char approximation if unavailable
