@@ -130,3 +130,6 @@ burnctl-complete-audit.txt
 
 # Session backup files (auto-generated during edits)
 *.bak-*
+
+# Pre-change file backups (created manually before risky multi-file edits)
+backups/

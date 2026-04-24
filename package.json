@@ -1,6 +1,6 @@
 {
   "name": "burnctl",
-  "version": "4.4.0-rc.4",
+  "version": "4.5.0",
   "description": "AI burn rate monitor for Claude Code. Finds waste patterns, generates CLAUDE.md fixes, measures impact. Local-only, zero pip deps.",
   "bin": {
     "burnctl": "./bin/burnctl.js"
@@ -39,6 +39,7 @@
   "files": [
     "_version.py",
     "analyzer.py",
+    "baseline_scanner.py",
     "bin/burnctl.js",
     "browser_sessions.py",
     "burn_rate.py",
@@ -48,6 +49,7 @@
     "compact_audit.py",
     "config.py",
     "daily_qa.py",
+    "daily_report.py",
     "db.py",
     "mcp_audit.py",
     "fix_apply.py",
