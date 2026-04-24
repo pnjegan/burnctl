@@ -809,6 +809,13 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
     <button onclick="this.parentElement.style.display='none'" style="position:absolute; top:12px; right:16px; font-size:16px; color:#92400E; cursor:pointer; background:none; border:none;">×</button>
   </div>
 
+  <!-- v4.5.0: Daily brief card (baseline overhead + SOS + top actions) -->
+  <section class="section" id="daily-brief-section" style="margin-bottom:16px;">
+    <div id="daily-brief-card" style="background:var(--surface); border:1px solid var(--border,#2A2A2A); border-radius:10px; padding:18px 22px; font-family:var(--mono); font-size:13px;">
+      <div id="daily-brief-loading" style="opacity:0.7;">Loading daily brief…</div>
+    </div>
+  </section>
+
   <!-- Hero stats -->
   <section class="hero" id="hero"></section>
 
@@ -2156,6 +2163,107 @@ function authHeaders() {
 
   $('add-fix-btn').addEventListener('click', showFixForm);
   fetchFixes();
+
+  // ── v4.5.0: Daily brief card ─────────────────────────────────────
+  function _fmtSignedPct(pct) {
+    if (pct === null || pct === undefined) return '—';
+    var s = pct > 0 ? '+' : '';
+    return s + Math.round(pct) + '%';
+  }
+  function _arrow(pct) {
+    if (pct === null || pct === undefined) return '→';
+    if (pct > 0.5) return '↑';
+    if (pct < -0.5) return '↓';
+    return '→';
+  }
+  function _deltaBadge(pct) {
+    var color = '#6B7280'; // neutral
+    if (pct === null || pct === undefined) color = '#6B7280';
+    else if (pct < 0) color = '#10B981';
+    else if (pct > 20) color = '#EF4444';
+    else if (pct > 5) color = '#F59E0B';
+    return '<span style="background:' + color + '; color:white; padding:2px 8px; border-radius:12px; font-size:11px; margin-left:6px;">' +
+      _fmtSignedPct(pct) + '</span>';
+  }
+  function renderDailyBrief() {
+    fetch('/api/daily').then(function(r) { return r.json(); }).then(function(b) {
+      var card = document.getElementById('daily-brief-card');
+      if (!card) return;
+      if (b.error) {
+        card.innerHTML = '<div style="color:var(--accent-red,#EF4444)">Daily brief unavailable — check server logs</div>';
+        return;
+      }
+      var baseline = b.baseline || {};
+      var runtime = b.runtime || {};
+      var trends = b.trends || {};
+      var recs = b.recommendations || [];
+
+      var html = '';
+      html += '<div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:10px;">';
+      html +=   '<h2 class="section-title" style="margin:0;">Daily brief — ' + esc(b.weekday) + ' ' + esc(b.date) + '</h2>';
+      html +=   '<span style="opacity:0.6; font-size:11px;">burnctl v4.5.0</span>';
+      html += '</div>';
+
+      // Top stats row
+      html += '<div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; margin-bottom:14px;">';
+      // Overhead
+      if (baseline.available) {
+        html += '<div><div style="opacity:0.6; font-size:11px; margin-bottom:2px;">OVERHEAD</div>' +
+                '<div style="font-size:18px;">' + (baseline.tokens || 0).toLocaleString() + ' tok' +
+                _deltaBadge(baseline.delta_pct) + '</div></div>';
+      } else {
+        html += '<div><div style="opacity:0.6; font-size:11px; margin-bottom:2px;">OVERHEAD</div>' +
+                '<div style="font-size:13px; opacity:0.7;">(first scan pending)</div></div>';
+      }
+      // Runtime
+      if (runtime.available) {
+        html += '<div><div style="opacity:0.6; font-size:11px; margin-bottom:2px;">RUNTIME BURN</div>' +
+                '<div style="font-size:18px;">' + (runtime.tokens || 0).toLocaleString() + ' tok' +
+                _deltaBadge(runtime.dod_pct) + '</div></div>';
+      } else {
+        html += '<div><div style="opacity:0.6; font-size:11px; margin-bottom:2px;">RUNTIME BURN</div>' +
+                '<div style="font-size:13px; opacity:0.7;">(data unavailable)</div></div>';
+      }
+      // Cost
+      html += '<div><div style="opacity:0.6; font-size:11px; margin-bottom:2px;">EST. DAILY COST</div>' +
+              '<div style="font-size:18px;">$' + (runtime.est_cost_usd || 0).toFixed(2) + '</div></div>';
+      html += '</div>';
+
+      // Top actions
+      html += '<div style="opacity:0.7; font-size:11px; margin-bottom:4px;">TOP ACTIONS TODAY</div>';
+      if (!recs.length) {
+        html += '<div style="opacity:0.7; font-size:12px; margin-bottom:10px;">All clear — no recommendations today</div>';
+      } else {
+        html += '<ol style="margin:0 0 10px 20px; padding:0;">';
+        for (var i = 0; i < recs.length; i++) {
+          var r = recs[i];
+          var saving = r.saving_usd_monthly ? ' (~$' + r.saving_usd_monthly.toFixed(2) + '/mo)' : '';
+          html += '<li style="font-size:12px; margin-bottom:3px;">' + esc(r.message || '') + saving + '</li>';
+        }
+        html += '</ol>';
+      }
+
+      // Trends row
+      html += '<div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; padding-top:10px; border-top:1px solid var(--border,#2A2A2A);">';
+      if (b.trend_caveat) {
+        html += '<div style="grid-column:1/-1; opacity:0.7; font-size:11px;">' + esc(b.trend_caveat) + '</div>';
+      } else {
+        html += '<div><div style="opacity:0.6; font-size:11px;">Baseline drift (7d)</div>' +
+                '<div>' + _arrow(trends.baseline_drift_7d_pct) + ' ' + _fmtSignedPct(trends.baseline_drift_7d_pct) + '</div></div>';
+        html += '<div><div style="opacity:0.6; font-size:11px;">DoD runtime</div>' +
+                '<div>' + _arrow(trends.dod_runtime_pct) + ' ' + _fmtSignedPct(trends.dod_runtime_pct) + '</div></div>';
+        html += '<div><div style="opacity:0.6; font-size:11px;">WoW total</div>' +
+                '<div>' + _arrow(trends.wow_total_pct) + ' ' + _fmtSignedPct(trends.wow_total_pct) + '</div></div>';
+      }
+      html += '</div>';
+
+      card.innerHTML = html;
+    }).catch(function(e) {
+      var card = document.getElementById('daily-brief-card');
+      if (card) card.innerHTML = '<div style="color:var(--accent-red,#EF4444)">Daily brief unavailable — check server logs</div>';
+    });
+  }
+  renderDailyBrief();
 
   // Auto-refresh
   refresh();
