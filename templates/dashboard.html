@@ -2224,9 +2224,15 @@ function authHeaders() {
         html += '<div><div style="opacity:0.6; font-size:11px; margin-bottom:2px;">RUNTIME BURN</div>' +
                 '<div style="font-size:13px; opacity:0.7;">(data unavailable)</div></div>';
       }
-      // Cost
-      html += '<div><div style="opacity:0.6; font-size:11px; margin-bottom:2px;">EST. DAILY COST</div>' +
-              '<div style="font-size:18px;">$' + (runtime.est_cost_usd || 0).toFixed(2) + '</div></div>';
+      // Cost — label is plan-aware (EST. DAILY COST vs API EQUIV TODAY)
+      var costLabel = runtime.cost_label || 'EST. DAILY COST';
+      var costNote = runtime.cost_note || '';
+      html += '<div><div style="opacity:0.6; font-size:11px; margin-bottom:2px;">' + esc(costLabel) + '</div>' +
+              '<div style="font-size:18px;">$' + (runtime.est_cost_usd || 0).toFixed(2) + '</div>';
+      if (costNote) {
+        html += '<div style="opacity:0.5; font-size:10px; margin-top:2px;">' + esc(costNote) + '</div>';
+      }
+      html += '</div>';
       html += '</div>';
 
       // Top actions

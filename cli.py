@@ -2142,7 +2142,12 @@ def cmd_daily():
         dod = runtime.get("dod_pct")
         dod_str = f"({_fmt_pct_signed(dod)} DoD)" if dod is not None else ""
         print(f"    RUNTIME BURN       {runtime['tokens']:,} tokens   {dod_str}")
-        print(f"    EST. DAILY COST    ${runtime.get('est_cost_usd', 0.0):.2f}")
+        cost_label = runtime.get("cost_label") or "EST. DAILY COST"
+        cost_note = runtime.get("cost_note") or ""
+        # pad label to 18 chars so the dollar value column stays aligned
+        label_col = f"{cost_label:<18}"
+        suffix = f"  {cost_note}" if cost_note else ""
+        print(f"    {label_col} ${runtime.get('est_cost_usd', 0.0):.2f}{suffix}")
     else:
         print(f"    RUNTIME BURN       (data unavailable)")
     print()

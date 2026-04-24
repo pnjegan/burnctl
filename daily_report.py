@@ -18,7 +18,12 @@ from db import (
     get_previous_baseline,
     get_baseline_readings,
     get_insights,
+    get_accounts_config,
 )
+
+# Plans that cover API costs via a flat monthly fee — users on these plans
+# see the token-priced number as an "API-equivalent" cost, not actual spend.
+_PLAN_COVERED = {"max", "pro", "team"}
 
 # Baseline cost model — mirrors insights.py (Sonnet input-cache-write mid-band)
 _BASELINE_PRICE_PER_TOKEN = 3.0 / 1_000_000
@@ -91,6 +96,32 @@ def _baseline_section(latest, prev) -> Dict[str, Any]:
     }
 
 
+def _detect_plan_coverage(conn) -> Dict[str, Any]:
+    """Return (has_plan_account, plan_label). plan_label e.g. 'Max plan'.
+
+    If any configured account is on Max/Pro/Team, the API-priced cost
+    shown in the brief is an API-equivalent figure, not real spend.
+    """
+    try:
+        accts = get_accounts_config(conn)
+    except Exception:
+        return {"has_plan": False, "plan_label": None}
+    plans_present = set()
+    for meta in (accts or {}).values():
+        if not isinstance(meta, dict):
+            continue
+        plan = (meta.get("plan") or meta.get("type") or "").lower()
+        if plan in _PLAN_COVERED:
+            plans_present.add(plan)
+    if not plans_present:
+        return {"has_plan": False, "plan_label": None}
+    # Prettiest label for the user: Max > Pro > Team (preference order)
+    for pref in ("max", "pro", "team"):
+        if pref in plans_present:
+            return {"has_plan": True, "plan_label": pref.capitalize() + " plan"}
+    return {"has_plan": True, "plan_label": "plan"}
+
+
 def _runtime_section(conn, today: str, yesterday: str) -> Dict[str, Any]:
     today_tokens = _sum_day_total_tokens(conn, today)
     yday_tokens = _sum_day_total_tokens(conn, yesterday)
@@ -104,12 +135,27 @@ def _runtime_section(conn, today: str, yesterday: str) -> Dict[str, Any]:
     this_7 = _window_sum(conn, this_start, today)
     prior_7 = _window_sum(conn, prior_start, prior_end)
     wow_pct = _pct_delta(this_7, prior_7) if prior_7 else None
+
+    # Plan-aware cost labelling (v4.5.2): Max/Pro/Team users do NOT pay the
+    # per-token API rate — their actual out-of-pocket is $0 above the flat
+    # monthly fee. Label the number honestly so the brief doesn't read as
+    # "I spent $X today".
+    plan_info = _detect_plan_coverage(conn)
+    if plan_info["has_plan"]:
+        cost_label = "API EQUIV TODAY"
+        cost_note = f"({plan_info['plan_label']} — not actual spend)"
+    else:
+        cost_label = "EST. DAILY COST"
+        cost_note = ""
+
     return {
         "available": True,
         "tokens": today_tokens,
         "dod_pct": round(dod_pct, 2) if dod_pct is not None else None,
         "wow_pct": round(wow_pct, 2) if wow_pct is not None else None,
         "est_cost_usd": round(today_cost, 4),
+        "cost_label": cost_label,
+        "cost_note": cost_note,
     }
 
 

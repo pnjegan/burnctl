@@ -225,6 +225,43 @@ class TestDailyReport(unittest.TestCase):
         self.assertEqual(b["recommendations"], [])
         self.assertIsNone(b["last_outcome"])
 
+    def test_cost_label_plan_user(self):
+        """Max/Pro/Team users should see 'API EQUIV TODAY', not 'EST. DAILY COST'."""
+        from db import get_conn
+        from daily_report import build_daily_brief
+        conn = get_conn()
+        conn.execute(
+            "INSERT INTO accounts (account_id,label,plan,monthly_cost_usd,"
+            "window_token_limit,color,data_paths,active,created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            ("p1", "Personal (Max)", "max", 100.0, 1000000, "#fff", "[]", 1, 0),
+        )
+        conn.commit()
+        conn.close()
+        b = build_daily_brief()
+        self.assertEqual(b["runtime"].get("cost_label"), "API EQUIV TODAY")
+        self.assertIn("Max plan", b["runtime"].get("cost_note", ""))
+
+    def test_cost_label_api_user(self):
+        """API-only users should see the default 'EST. DAILY COST' label."""
+        from db import get_conn
+        from daily_report import build_daily_brief
+        conn = get_conn()
+        # init_db seeds config.ACCOUNTS (which includes a 'max' account) —
+        # wipe that so this test reflects a pure API-only user.
+        conn.execute("DELETE FROM accounts")
+        conn.execute(
+            "INSERT INTO accounts (account_id,label,plan,monthly_cost_usd,"
+            "window_token_limit,color,data_paths,active,created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            ("a1", "Work (API)", "api", 0.0, 1000000, "#fff", "[]", 1, 0),
+        )
+        conn.commit()
+        conn.close()
+        b = build_daily_brief()
+        self.assertEqual(b["runtime"].get("cost_label"), "EST. DAILY COST")
+        self.assertEqual(b["runtime"].get("cost_note", ""), "")
+
 
 if __name__ == "__main__":
     unittest.main()
