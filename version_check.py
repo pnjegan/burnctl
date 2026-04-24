@@ -131,6 +131,7 @@ def run_version_check():
             print(f"   If your project root has any of these names, rename them")
             print(f"   before running Bash tool calls.")
             print(f"   Monitor https://github.com/anthropics/claude-code/issues/52578")
+            print(f"   → Pin your version with: export DISABLE_UPDATES=1")
         elif severity == "critical":
             print(f"🔴 KNOWN BAD: {short_reason}")
             print(f"   Cache costs in this range can run 10-20x normal.")

@@ -1565,6 +1565,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Access-Control-Allow-Origin", self._cors_origin())
+        # v4.5.3 N-1: all JSON responses are live dashboard data — never
+        # let a browser or proxy serve a stale copy. Individual endpoints
+        # that explicitly want caching can override before end_headers.
+        self.send_header("Cache-Control", "no-cache, must-revalidate")
         self.end_headers()
         self.wfile.write(body)
 

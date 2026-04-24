@@ -191,10 +191,16 @@ def _recommendations_section(conn, limit: int = 3) -> List[Dict[str, Any]]:
             detail = json.loads(r["detail_json"]) if r["detail_json"] else {}
         except (ValueError, TypeError):
             detail = {}
+        # v4.5.3 A-06: existing insights rules emit different key names for
+        # saving/cost. Include all observed aliases so the brief ranks by
+        # money-at-stake rather than insight_id (FIFO).
         saving_usd = (
             detail.get("usd_monthly")
             or detail.get("delta_usd_monthly")
             or detail.get("estimated_monthly_usd")
+            or detail.get("savings")
+            or detail.get("cost")
+            or detail.get("cost_usd")
             or 0.0
         )
         try:

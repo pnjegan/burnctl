@@ -1927,6 +1927,9 @@ function authHeaders() {
       })
       .then(data => { lastData = data; paint(data); })
       .catch(err => { $('footer').textContent = 'Error: ' + err.message; });
+    // v4.5.3 G-03: also refresh the daily brief card so it doesn't
+    // show yesterday's data after a long-lived tab crosses midnight UTC.
+    try { renderDailyBrief(); } catch (_) { /* defined later in file; OK */ }
   }
 
   // Scan button
