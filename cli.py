@@ -71,6 +71,7 @@ Commands:
                 PROJECT_MAP. Useful after adding projects to config.py.
   show-other    List all source paths of sessions currently tagged 'Other'
   stats         Print per-account stats table
+  daily         One-shot daily brief (baseline overhead, DoD/WoW, top actions)
   insights      Show active insights
   window        Show 5-hour window status
   export        Export last 30 days to CSV
@@ -2100,6 +2101,106 @@ def cmd_why_limit():
     sys.exit(why_limit_main())
 
 
+def _fmt_pct_signed(pct):
+    if pct is None:
+        return "—"
+    sign = "+" if pct > 0 else ""
+    return f"{sign}{pct:.0f}%"
+
+
+def _fmt_arrow(pct):
+    if pct is None:
+        return "→"
+    if pct > 0.5:
+        return "↑"
+    if pct < -0.5:
+        return "↓"
+    return "→"
+
+
+def cmd_daily():
+    """`burnctl daily` — one-shot daily brief (overhead, burn, recommendations)."""
+    from daily_report import build_daily_brief
+    brief = build_daily_brief()
+
+    bar = "─" * 49
+    print()
+    print(f"  {bar}")
+    print(f"    burnctl daily brief — {brief['weekday']} {brief['date']}")
+    print(f"  {bar}")
+    print()
+
+    baseline = brief.get("baseline") or {}
+    runtime = brief.get("runtime") or {}
+    if baseline.get("available"):
+        pct = baseline.get("delta_pct")
+        delta_str = f"({_fmt_pct_signed(pct)} vs yesterday)" if pct is not None else ""
+        print(f"    OVERHEAD TODAY     {baseline['tokens']:,} tokens  {delta_str}")
+    else:
+        print(f"    OVERHEAD TODAY     (data unavailable — first scan pending)")
+    if runtime.get("available"):
+        dod = runtime.get("dod_pct")
+        dod_str = f"({_fmt_pct_signed(dod)} DoD)" if dod is not None else ""
+        print(f"    RUNTIME BURN       {runtime['tokens']:,} tokens   {dod_str}")
+        print(f"    EST. DAILY COST    ${runtime.get('est_cost_usd', 0.0):.2f}")
+    else:
+        print(f"    RUNTIME BURN       (data unavailable)")
+    print()
+
+    # What changed (baseline)
+    print("    WHAT CHANGED (BASELINE)")
+    added = (baseline.get("added_sources") or []) if baseline.get("available") else []
+    grown = (baseline.get("grown_sources") or []) if baseline.get("available") else []
+    if not added and not grown:
+        print("      No baseline changes since yesterday")
+    else:
+        for s in added[:5]:
+            print(f"      + {s['type']}:{s['name']} ({s['tokens']:,} tokens)")
+        for s in grown[:5]:
+            print(f"      ↑ {s['type']}:{s['name']} (+{s['delta_tokens']:,} tokens)")
+    print()
+
+    # Top actions today
+    print("    TOP ACTIONS TODAY")
+    recs = brief.get("recommendations") or []
+    if not recs:
+        print("      All clear — no recommendations today")
+    else:
+        for r in recs:
+            saving = r.get("saving_usd_monthly") or 0.0
+            tail = f" (~${saving:.2f}/mo)" if saving > 0 else ""
+            print(f"      {r['rank']}. {r['message']}{tail}")
+    print()
+
+    # Trends
+    print("    TRENDS")
+    trends = brief.get("trends") or {}
+    caveat = brief.get("trend_caveat")
+    if caveat:
+        print(f"      ({caveat})")
+    else:
+        drift = trends.get("baseline_drift_7d_pct")
+        dod = trends.get("dod_runtime_pct")
+        wow = trends.get("wow_total_pct")
+        print(f"      Baseline drift (7d):   {_fmt_arrow(drift)} {_fmt_pct_signed(drift)}")
+        print(f"      DoD runtime:           {_fmt_arrow(dod)} {_fmt_pct_signed(dod)}")
+        print(f"      WoW total:             {_fmt_arrow(wow)} {_fmt_pct_signed(wow)}")
+    print()
+
+    # Last action outcome
+    print("    LAST ACTION OUTCOME")
+    last = brief.get("last_outcome")
+    if not last:
+        print("      No recent action outcomes to report")
+    else:
+        title = last.get("title") or f"fix#{last.get('fix_id')}"
+        days = last.get("days_since") or 0
+        verdict = last.get("verdict") or ""
+        print(f"      Fix '{title}' measured {days}d after apply — verdict: {verdict}")
+    print()
+    print(f"  {bar}")
+
+
 def cmd_fix_rules():
     """`burnctl fix-rules` — emit a CLAUDE.md rules block from real waste data."""
     from fix_rules import generate_claude_md_rules
@@ -2223,6 +2324,7 @@ def main():
         "scan": cmd_scan,
         "show-other": cmd_show_other,
         "stats": cmd_stats,
+        "daily": cmd_daily,
         "insights": cmd_insights,
         "window": cmd_window,
         "export": cmd_export,
