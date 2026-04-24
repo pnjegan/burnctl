@@ -347,6 +347,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
             conn.close()
             self._serve_json([dict(r) for r in rows])
 
+        elif path == "/api/daily":
+            # v4.5.0 daily brief — baseline overhead, SOS deltas, top actions.
+            try:
+                from daily_report import build_daily_brief
+                conn = get_conn()
+                try:
+                    brief = build_daily_brief(conn=conn)
+                finally:
+                    conn.close()
+                self._serve_json(brief)
+            except Exception as e:
+                self._serve_json({"error": f"daily brief unavailable: {e}"})
+
         elif path == "/api/window":
             account = params.get("account", ["personal_max"])[0]
             conn = get_conn()
