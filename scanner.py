@@ -10,6 +10,8 @@ from config import UNKNOWN_PROJECT, MODEL_PRICING
 from db import (
     get_conn, insert_session, get_accounts_config, get_project_map_config,
     insert_lifecycle_event, insert_mcp_warning,
+    insert_baseline_reading, get_baseline_readings,
+    upsert_daily_snapshot,
 )
 from insights import generate_insights
 
@@ -782,6 +784,82 @@ def scan_lifecycle_events(conn):
     return total_events, files_done
 
 
+def _capture_daily_baseline(conn):
+    """Capture one baseline overhead reading per UTC day.
+
+    Idempotent: if today already has a reading, skip. Never raises —
+    caller wraps in try/except but we also defend here.
+    """
+    try:
+        from baseline_scanner import scan_baseline
+    except Exception as e:
+        print(f"[scanner] baseline scanner unavailable: {e}", file=sys.stderr)
+        return
+    today = datetime.now(timezone.utc).date().isoformat()
+    existing = get_baseline_readings(days=1, conn=conn)
+    if existing and existing[0].get("snapshot_date") == today:
+        return  # already captured today
+    snap = scan_baseline()
+    insert_baseline_reading(
+        timestamp=snap["timestamp"],
+        total_tokens=snap["total_tokens"],
+        sources=snap["sources"],
+        conn=conn,
+    )
+    conn.commit()
+    print(
+        f"[scanner] baseline captured: {snap['total_tokens']} tokens "
+        f"across {len(snap['sources'])} sources",
+        file=sys.stderr,
+    )
+
+
+def _populate_daily_snapshots(conn):
+    """Aggregate today's sessions into daily_snapshots (per account,per project).
+
+    Idempotent via ON CONFLICT in upsert_daily_snapshot. Writes only today's
+    UTC day — historical backfill is out of scope for v4.5.0.
+    """
+    today = datetime.now(timezone.utc).date().isoformat()
+    # Sum per (account, project) for UTC-today. timestamp is epoch seconds.
+    rows = conn.execute(
+        """
+        SELECT
+            COALESCE(account, 'unknown')   AS account,
+            COALESCE(project, 'unknown')   AS project,
+            SUM(COALESCE(input_tokens,0)
+              + COALESCE(output_tokens,0)
+              + COALESCE(cache_read_tokens,0)
+              + COALESCE(cache_creation_tokens,0)) AS total_tokens,
+            SUM(COALESCE(cost_usd,0))      AS total_cost,
+            SUM(COALESCE(cache_read_tokens,0))  AS cache_read,
+            SUM(COALESCE(input_tokens,0)
+              + COALESCE(cache_creation_tokens,0)) AS input_ish,
+            COUNT(DISTINCT session_id)     AS sessions
+        FROM sessions
+        WHERE date(timestamp, 'unixepoch') = ?
+        GROUP BY account, project
+        """,
+        (today,),
+    ).fetchall()
+    for r in rows:
+        total = r["total_tokens"] or 0
+        cache_read = r["cache_read"] or 0
+        input_ish = r["input_ish"] or 0
+        denom = cache_read + input_ish
+        hit_rate = (cache_read / denom) if denom else 0.0
+        upsert_daily_snapshot(
+            conn,
+            today,
+            r["account"],
+            r["project"],
+            int(total),
+            float(r["total_cost"] or 0.0),
+            float(hit_rate),
+            int(r["sessions"] or 0),
+        )
+
+
 def scan_all(account_filter=None):
     """Walk all configured data_paths and scan JSONL files incrementally.
     Serialized via _scan_lock — concurrent callers wait for the in-flight scan."""
@@ -829,6 +907,21 @@ def _scan_all_locked(account_filter=None):
             print(f"[scanner] Lifecycle: {evts} new events", file=sys.stderr)
     except Exception as e:
         print(f"[scanner] Lifecycle detection error: {e}", file=sys.stderr)
+
+    # v4.5.0: capture baseline overhead snapshot once per UTC day.
+    # Wrapped broadly — baseline failure must never break the main scan.
+    try:
+        _capture_daily_baseline(conn)
+    except Exception as e:
+        print(f"[scanner] baseline capture failed: {e}", file=sys.stderr)
+
+    # v4.5.0: populate daily_snapshots for today (per account,per project).
+    # Idempotent via UNIQUE(date,account,project) + ON CONFLICT upsert.
+    try:
+        _populate_daily_snapshots(conn)
+        conn.commit()
+    except Exception as e:
+        print(f"[scanner] daily_snapshots population failed: {e}", file=sys.stderr)
 
     conn.close()
     _last_scan_time = int(time.time())
