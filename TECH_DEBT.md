@@ -82,3 +82,15 @@ Options for proper fix:
 Not urgent — cron self-corrects. But every future verdict logic
 change will re-hit this bug. Pick an approach before the next
 verdict change.
+
+## v4.5.1 targets (from auditor 2026-04-24)
+
+### P2-1: Recommendation ranking FIFO not value-ranked
+- File: daily_report.py:135-140
+- Fix: add `savings`, `cost`, `cost_usd` to saving extraction key aliases
+- Impact: TOP ACTIONS currently sorted by insight_id ASC, not money-at-stake
+
+### P2-2: Per-project CLAUDE.md not scanned
+- File: baseline_scanner.py — walks wrong path for project CLAUDE.md
+- Fix: read project_roots from accounts config, walk <root>/CLAUDE.md
+- Impact: claudemd_bloat rule only fires on global ~/.claude/CLAUDE.md
