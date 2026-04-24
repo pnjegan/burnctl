@@ -48,6 +48,18 @@ SKILLS_DIR = os.path.join(HOME, ".claude", "skills")
 GLOBAL_CLAUDEMD = os.path.join(HOME, ".claude", "CLAUDE.md")
 PROJECTS_DIR = os.path.join(HOME, ".claude", "projects")
 
+# v4.5.3 E-01: the canonical Claude Code session-log dir (PROJECTS_DIR
+# above) does NOT contain real repo CLAUDE.md files — only JSONL logs.
+# These defaults scan common checked-out-repo locations for project-level
+# CLAUDE.md. Override via BURNCTL_PROJECT_ROOTS=/path/one:/path/two.
+_DEFAULT_PROJECT_PARENTS = [
+    os.path.join(HOME, "projects"),
+    os.path.join(HOME, "code"),
+    os.path.join(HOME, "dev"),
+    os.path.join(HOME, "src"),
+    os.path.join(HOME, "work"),
+]
+
 MCP_CONFIG_CANDIDATES = [
     os.path.join(HOME, ".claude.json"),
     os.path.join(HOME, ".claude", "settings.json"),
@@ -71,6 +83,67 @@ def _warn(msg: str) -> None:
     print(f"[baseline_scanner] WARNING: {msg}", file=sys.stderr)
 
 
+def _already_seen(path: str, seen: set) -> bool:
+    """v4.5.3 N-2 symlink cycle guard. Returns True if `path` (resolved via
+    os.path.realpath) has already been processed in the current scan.
+    On first-seen, records it and returns False.
+
+    Guards all three scan loops (agents, skills, CLAUDE.md walk) against
+    circular symlinks. Confirmed ~5 symlinks in ~/.claude/skills/ — cheap
+    insurance against a future self-referential one.
+    """
+    try:
+        real = os.path.realpath(path)
+    except OSError:
+        return False  # best-effort — let caller process; failure will surface elsewhere
+    if real in seen:
+        _warn(f"symlink cycle: {path} already visited (realpath={real}), skipping")
+        return True
+    seen.add(real)
+    return False
+
+
+def _discover_project_roots() -> List[str]:
+    """v4.5.3 E-01. Return a deduplicated list of directories that are likely
+    to contain real project CLAUDE.md files.
+
+    Priority order:
+      1. BURNCTL_PROJECT_ROOTS env var (colon-separated) — explicit opt-in.
+      2. Default parent directories under $HOME — each child dir is a
+         potential project root.
+    """
+    roots: List[str] = []
+    env_override = os.environ.get("BURNCTL_PROJECT_ROOTS", "").strip()
+    if env_override:
+        for p in env_override.split(":"):
+            p = os.path.expanduser(p.strip())
+            if p and os.path.isdir(p):
+                roots.append(p)
+    # Default parents: each of these is scanned one level deep (child is a project)
+    for parent in _DEFAULT_PROJECT_PARENTS:
+        if not os.path.isdir(parent):
+            continue
+        try:
+            for entry in sorted(os.listdir(parent)):
+                child = os.path.join(parent, entry)
+                if os.path.isdir(child):
+                    roots.append(child)
+        except OSError as e:
+            _warn(f"could not walk {parent}: {e}")
+    # Deduplicate by realpath while preserving first-seen order
+    seen: set = set()
+    deduped: List[str] = []
+    for r in roots:
+        try:
+            real = os.path.realpath(r)
+        except OSError:
+            real = r
+        if real not in seen:
+            seen.add(real)
+            deduped.append(r)
+    return deduped
+
+
 def _read_text(path: str) -> str | None:
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
@@ -88,7 +161,7 @@ def _iso_mtime(path: str) -> str:
         return ""
 
 
-def _scan_agents() -> List[Dict[str, Any]]:
+def _scan_agents(seen: set) -> List[Dict[str, Any]]:
     sources = []
     if not os.path.isdir(AGENTS_DIR):
         return sources
@@ -101,6 +174,8 @@ def _scan_agents() -> List[Dict[str, Any]]:
         if not name.endswith(".md"):
             continue
         path = os.path.join(AGENTS_DIR, name)
+        if _already_seen(path, seen):
+            continue
         text = _read_text(path)
         if text is None:
             continue
@@ -114,7 +189,7 @@ def _scan_agents() -> List[Dict[str, Any]]:
     return sources
 
 
-def _scan_skills() -> List[Dict[str, Any]]:
+def _scan_skills(seen: set) -> List[Dict[str, Any]]:
     sources = []
     if not os.path.isdir(SKILLS_DIR):
         return sources
@@ -126,6 +201,8 @@ def _scan_skills() -> List[Dict[str, Any]]:
     for name in entries:
         skill_dir = os.path.join(SKILLS_DIR, name)
         if not os.path.isdir(skill_dir):
+            continue
+        if _already_seen(skill_dir, seen):
             continue
         # Prefer SKILL.md; fall back to any single top-level .md
         candidates = ["SKILL.md", "skill.md"]
@@ -192,10 +269,10 @@ def _scan_mcps() -> List[Dict[str, Any]]:
     return sources
 
 
-def _scan_claudemds() -> List[Dict[str, Any]]:
+def _scan_claudemds(seen: set) -> List[Dict[str, Any]]:
     sources = []
-    # Global
-    if os.path.isfile(GLOBAL_CLAUDEMD):
+    # 1. Global CLAUDE.md
+    if os.path.isfile(GLOBAL_CLAUDEMD) and not _already_seen(GLOBAL_CLAUDEMD, seen):
         text = _read_text(GLOBAL_CLAUDEMD)
         if text is not None:
             sources.append({
@@ -205,7 +282,8 @@ def _scan_claudemds() -> List[Dict[str, Any]]:
                 "tokens": estimate_tokens(text),
                 "last_modified": _iso_mtime(GLOBAL_CLAUDEMD),
             })
-    # Per-project CLAUDE.md under ~/.claude/projects/*
+    # 2. Back-compat: CLAUDE.md under ~/.claude/projects/* (kept for existing
+    #    installs that were relying on this path; real repos live elsewhere).
     if os.path.isdir(PROJECTS_DIR):
         try:
             for entry in sorted(os.listdir(PROJECTS_DIR)):
@@ -214,6 +292,8 @@ def _scan_claudemds() -> List[Dict[str, Any]]:
                     continue
                 cmd = os.path.join(proj, "CLAUDE.md")
                 if not os.path.isfile(cmd):
+                    continue
+                if _already_seen(cmd, seen):
                     continue
                 text = _read_text(cmd)
                 if text is None:
@@ -227,6 +307,25 @@ def _scan_claudemds() -> List[Dict[str, Any]]:
                 })
         except OSError as e:
             _warn(f"could not walk {PROJECTS_DIR}: {e}")
+    # 3. v4.5.3 E-01: scan real project roots for CLAUDE.md.
+    for root in _discover_project_roots():
+        cmd = os.path.join(root, "CLAUDE.md")
+        if not os.path.isfile(cmd):
+            continue
+        if _already_seen(cmd, seen):
+            continue
+        text = _read_text(cmd)
+        if text is None:
+            continue
+        # Display name: repo dir basename so UI shows e.g. "burnctl/CLAUDE.md"
+        label = os.path.basename(os.path.abspath(root)) + "/CLAUDE.md"
+        sources.append({
+            "type": "claudemd",
+            "name": label,
+            "path": cmd,
+            "tokens": estimate_tokens(text),
+            "last_modified": _iso_mtime(cmd),
+        })
     return sources
 
 
@@ -243,10 +342,11 @@ def scan_baseline() -> Dict[str, Any]:
     Never raises. Unreadable sources are skipped with a stderr warning.
     """
     sources: List[Dict[str, Any]] = []
-    sources.extend(_scan_agents())
-    sources.extend(_scan_skills())
-    sources.extend(_scan_mcps())
-    sources.extend(_scan_claudemds())
+    seen: set = set()  # realpath dedup + symlink cycle guard (N-2)
+    sources.extend(_scan_agents(seen))
+    sources.extend(_scan_skills(seen))
+    sources.extend(_scan_mcps())  # MCP is config-file based; no path traversal
+    sources.extend(_scan_claudemds(seen))
     total = sum(int(s.get("tokens") or 0) for s in sources)
     return {
         "timestamp": datetime.datetime.now().isoformat(timespec="seconds"),

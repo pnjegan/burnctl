@@ -11,6 +11,7 @@ from db import (
     get_conn, insert_session, get_accounts_config, get_project_map_config,
     insert_lifecycle_event, insert_mcp_warning,
     insert_baseline_reading, get_baseline_readings,
+    prune_old_baseline_readings,
     upsert_daily_snapshot,
 )
 from insights import generate_insights
@@ -787,19 +788,24 @@ def scan_lifecycle_events(conn):
 def _capture_daily_baseline(conn):
     """Capture one baseline overhead reading per UTC day.
 
-    Idempotent: if today already has a reading, skip. Never raises —
-    caller wraps in try/except but we also defend here.
+    Idempotent: if today already has a reading, skip. Never raises — any
+    exception inside scan_baseline() or the DB write is swallowed with a
+    stderr warning so the caller's main scan loop never breaks.
     """
     try:
         from baseline_scanner import scan_baseline
     except Exception as e:
         print(f"[scanner] baseline scanner unavailable: {e}", file=sys.stderr)
         return
-    today = datetime.now(timezone.utc).date().isoformat()
-    existing = get_baseline_readings(days=1, conn=conn)
-    if existing and existing[0].get("snapshot_date") == today:
-        return  # already captured today
-    snap = scan_baseline()
+    try:
+        today = datetime.now(timezone.utc).date().isoformat()
+        existing = get_baseline_readings(days=1, conn=conn)
+        if existing and existing[0].get("snapshot_date") == today:
+            return  # already captured today
+        snap = scan_baseline()
+    except Exception as e:
+        print(f"[scanner] baseline scan failed: {e}", file=sys.stderr)
+        return
     insert_baseline_reading(
         timestamp=snap["timestamp"],
         total_tokens=snap["total_tokens"],
@@ -914,6 +920,17 @@ def _scan_all_locked(account_filter=None):
         _capture_daily_baseline(conn)
     except Exception as e:
         print(f"[scanner] baseline capture failed: {e}", file=sys.stderr)
+
+    # v4.5.3 M-2: retention — keep baseline_readings bounded at 90 days.
+    try:
+        deleted = prune_old_baseline_readings(days=90, conn=conn)
+        if deleted > 0:
+            print(
+                f"[scanner] Pruned {deleted} baseline readings older than 90 days",
+                file=sys.stderr,
+            )
+    except Exception as e:
+        print(f"[scanner] baseline prune failed: {e}", file=sys.stderr)
 
     # v4.5.0: populate daily_snapshots for today (per account,per project).
     # Idempotent via UNIQUE(date,account,project) + ON CONFLICT upsert.

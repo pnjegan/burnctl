@@ -333,6 +333,46 @@ def check_browser_session_health():
     return WOW, f"avg session {avg_max:.0f}min — healthy"
 
 
+def check_researcher_staleness():
+    """v4.5.3 M-3 — flag a silent burnctl-researcher cron failure.
+
+    burnctl-researcher is expected to refresh research-reports/ daily at
+    06:30 UTC. We look for either `research-reports/latest.md` (the canonical
+    pointer) or, failing that, the newest dated report in the directory.
+    If neither exists or the freshest is older than 25 h we DOD so the
+    human notices before pitch-day relies on stale intel.
+    """
+    rr_dir = Path(__file__).parent / "research-reports"
+    if not rr_dir.is_dir():
+        return DOD, "research-reports/ directory missing — burnctl-researcher not set up"
+    target = rr_dir / "latest.md"
+    if not target.exists():
+        # Fallback: newest *.md by mtime
+        dated = sorted(
+            (p for p in rr_dir.glob("*.md") if p.is_file()),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if not dated:
+            return DOD, "research-reports/ is empty — run burnctl-researcher manually"
+        target = dated[0]
+    try:
+        age_s = time.time() - target.stat().st_mtime
+    except OSError as e:
+        return DOD, f"could not stat {target.name}: {e}"
+    hours = age_s / 3600.0
+    label = target.name
+    if hours > 25:
+        return DOD, (
+            f"research-reports/{label} is {hours:.1f} hours old — "
+            "burnctl-researcher cron may have failed"
+        )
+    # Freshness sliding scale: anything under 25 h is good; under 12 h is ideal.
+    if hours > 12:
+        return OK, f"research-reports/{label} is {hours:.1f}h old (fresh but >12h)"
+    return WOW, f"research-reports/{label} refreshed {hours:.1f}h ago"
+
+
 TESTS = [
     # npx commands — run from fresh /tmp
     ("audit",            "npx",  "audit",                 score_audit),
@@ -398,6 +438,20 @@ def run_all_tests():
         "name": "browser-session-health",
         "kind": "local",
         "arg": "browser_sessions.get_browser_summary",
+        "status": status,
+        "evidence": evidence,
+        "exit_code": 0 if status != DOD else 2,
+        "elapsed_sec": round(time.monotonic() - t0, 2),
+        "output_head": evidence[:500],
+    })
+
+    # v4.5.3 M-3 — researcher report freshness (catches silent cron failure).
+    t0 = time.monotonic()
+    status, evidence = check_researcher_staleness()
+    results.append({
+        "name": "researcher-staleness",
+        "kind": "local",
+        "arg": "research-reports/latest.md mtime",
         "status": status,
         "evidence": evidence,
         "exit_code": 0 if status != DOD else 2,

@@ -57,11 +57,15 @@ class TestScanBaseline(unittest.TestCase):
         don't exist — it points at missing paths and each internal scanner
         skips silently."""
         import baseline_scanner
+        # Also stub BURNCTL_PROJECT_ROOTS so v4.5.3 E-01 project-root walk
+        # can't accidentally find real CLAUDE.md files on the test host.
         with mock.patch.object(baseline_scanner, "AGENTS_DIR", "/nonexistent/agents"), \
              mock.patch.object(baseline_scanner, "SKILLS_DIR", "/nonexistent/skills"), \
              mock.patch.object(baseline_scanner, "GLOBAL_CLAUDEMD", "/nonexistent/CLAUDE.md"), \
              mock.patch.object(baseline_scanner, "PROJECTS_DIR", "/nonexistent/projects"), \
-             mock.patch.object(baseline_scanner, "MCP_CONFIG_CANDIDATES", ["/nonexistent/x.json"]):
+             mock.patch.object(baseline_scanner, "MCP_CONFIG_CANDIDATES", ["/nonexistent/x.json"]), \
+             mock.patch.object(baseline_scanner, "_DEFAULT_PROJECT_PARENTS", ["/nonexistent/projects-parent"]), \
+             mock.patch.dict(os.environ, {"BURNCTL_PROJECT_ROOTS": ""}, clear=False):
             result = baseline_scanner.scan_baseline()
         self.assertIsNotNone(result)
         self.assertEqual(result["total_tokens"], 0)
@@ -124,6 +128,30 @@ class TestDbBaselineHelpers(unittest.TestCase):
         self.assertEqual(rows[0]["snapshot_date"], "2026-04-24")
         self.assertEqual(rows[1]["snapshot_date"], "2026-04-23")
         self.assertEqual(rows[1]["total_tokens"], 150)  # took latest for that day
+
+    def test_prune_deletes_rows_older_than_cutoff(self):
+        """v4.5.3 M-2: prune_old_baseline_readings honours the days cutoff."""
+        from db import insert_baseline_reading, prune_old_baseline_readings, get_conn
+        import datetime
+        old = (datetime.date.today() - datetime.timedelta(days=100)).isoformat() + "T00:00:00"
+        recent = datetime.datetime.now().isoformat()
+        insert_baseline_reading(old, 999, [])      # 100 days old
+        insert_baseline_reading(recent, 1000, [])  # today
+        deleted = prune_old_baseline_readings(days=90)
+        self.assertEqual(deleted, 1)
+        conn = get_conn()
+        try:
+            remaining = conn.execute(
+                "SELECT COUNT(*) FROM baseline_readings"
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        self.assertEqual(remaining, 1)
+
+    def test_prune_on_empty_table_is_safe(self):
+        """Running prune on an empty table returns 0, does not crash."""
+        from db import prune_old_baseline_readings
+        self.assertEqual(prune_old_baseline_readings(days=90), 0)
 
 
 class TestBaselineInsights(unittest.TestCase):
