@@ -787,19 +787,24 @@ def scan_lifecycle_events(conn):
 def _capture_daily_baseline(conn):
     """Capture one baseline overhead reading per UTC day.
 
-    Idempotent: if today already has a reading, skip. Never raises —
-    caller wraps in try/except but we also defend here.
+    Idempotent: if today already has a reading, skip. Never raises — any
+    exception inside scan_baseline() or the DB write is swallowed with a
+    stderr warning so the caller's main scan loop never breaks.
     """
     try:
         from baseline_scanner import scan_baseline
     except Exception as e:
         print(f"[scanner] baseline scanner unavailable: {e}", file=sys.stderr)
         return
-    today = datetime.now(timezone.utc).date().isoformat()
-    existing = get_baseline_readings(days=1, conn=conn)
-    if existing and existing[0].get("snapshot_date") == today:
-        return  # already captured today
-    snap = scan_baseline()
+    try:
+        today = datetime.now(timezone.utc).date().isoformat()
+        existing = get_baseline_readings(days=1, conn=conn)
+        if existing and existing[0].get("snapshot_date") == today:
+            return  # already captured today
+        snap = scan_baseline()
+    except Exception as e:
+        print(f"[scanner] baseline scan failed: {e}", file=sys.stderr)
+        return
     insert_baseline_reading(
         timestamp=snap["timestamp"],
         total_tokens=snap["total_tokens"],
