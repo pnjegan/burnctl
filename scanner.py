@@ -11,6 +11,7 @@ from db import (
     get_conn, insert_session, get_accounts_config, get_project_map_config,
     insert_lifecycle_event, insert_mcp_warning,
     insert_baseline_reading, get_baseline_readings,
+    prune_old_baseline_readings,
     upsert_daily_snapshot,
 )
 from insights import generate_insights
@@ -919,6 +920,17 @@ def _scan_all_locked(account_filter=None):
         _capture_daily_baseline(conn)
     except Exception as e:
         print(f"[scanner] baseline capture failed: {e}", file=sys.stderr)
+
+    # v4.5.3 M-2: retention — keep baseline_readings bounded at 90 days.
+    try:
+        deleted = prune_old_baseline_readings(days=90, conn=conn)
+        if deleted > 0:
+            print(
+                f"[scanner] Pruned {deleted} baseline readings older than 90 days",
+                file=sys.stderr,
+            )
+    except Exception as e:
+        print(f"[scanner] baseline prune failed: {e}", file=sys.stderr)
 
     # v4.5.0: populate daily_snapshots for today (per account,per project).
     # Idempotent via UNIQUE(date,account,project) + ON CONFLICT upsert.

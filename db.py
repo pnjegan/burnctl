@@ -1356,6 +1356,36 @@ def get_previous_baseline(conn=None):
             conn.close()
 
 
+def prune_old_baseline_readings(days=90, conn=None):
+    """v4.5.3 M-2 — retention policy on baseline_readings.
+
+    Deletes rows whose snapshot_date is older than `days` days back from
+    today's UTC date. Returns the count of deleted rows.
+
+    90 days is enough for the dod/wow/7-day-drift rules and the daily
+    brief sparkline, and prevents unbounded growth for long-lived
+    installations. Called at end of each successful scan run.
+
+    Safe to run on an empty table (returns 0).
+    """
+    from datetime import date, timedelta
+    own = conn is None
+    if own:
+        conn = get_conn()
+    try:
+        cutoff = (date.today() - timedelta(days=int(days))).isoformat()
+        cursor = conn.execute(
+            "DELETE FROM baseline_readings WHERE snapshot_date < ?",
+            (cutoff,),
+        )
+        if own:
+            conn.commit()
+        return cursor.rowcount or 0
+    finally:
+        if own:
+            conn.close()
+
+
 # --- Window burns ---
 
 def insert_window_burn(conn, account, window_start, window_end, tokens_used, tokens_limit, pct_used, hit_limit):
