@@ -242,6 +242,27 @@ Last consolidated: 2026-04-24 (v4.5.3 gap-closure session).
   used everywhere, with a clear "create vs read-only" semantic.
 - **Added:** v4.5.4 post-publish smoke 2026-04-29.
 
+### TD-14 — unittest test pollution into ~/.burnctl/data/usage.db
+- **Status:** open
+- **Priority:** P3 (test isolation hygiene; not user-facing)
+- **Files:** unknown — needs `find tests/ -name "*.py" -exec grep -l "init_db\|get_conn\|DB_PATH" {} \;`
+  to identify the source
+- **Context:** During v4.5.5 hotfix validation, an empty
+  `~/.burnctl/data/usage.db` (4096 bytes, no tables, mtime ~11:12 UTC)
+  appeared after `python3 -m unittest discover -s tests -v`
+  completed. The file persisted across the test run, polluting
+  subsequent integration tests that depend on the user-fallback
+  path being absent. Pre-existing — not introduced by v4.5.5.
+- **Fix:** identify which test fixture creates the leak. Likely
+  a test that calls `init_db()` without monkey-patching DB_PATH
+  to a tempdir — letting init_db pick the second candidate from
+  get_conn's tuple (`~/.burnctl/data/usage.db`) when DB_PATH's
+  local data dir doesn't exist. Add proper isolation:
+  monkey-patch DB_PATH in setUp, restore in tearDown.
+- **Acceptance:** running the full test suite from a fresh
+  environment leaves no files in `~/.burnctl/`.
+- **Added:** v4.5.5 hotfix validation 2026-04-29.
+
 ---
 
 ## Resolved in v4.5.3 (this session)

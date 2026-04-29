@@ -2837,3 +2837,108 @@ d65560f merge: rc.4 verdict + dedup fixes                                       
 - **Pre-publish daily_qa: 19/20 WOW, 0 OK, 1 DOD.** The single DOD is
   the new `daily` test correctly flagging the v4.5.3-on-registry shim
   drift — meta-recursive but expected. Will flip to WOW post-publish.
+
+## [2026-04-29] Session 42b — v4.5.5 hotfix-on-hotfix — db.get_conn no-auto-create + daily None-guard
+
+### Why this hotfix-on-hotfix
+v4.5.4 (commits 07f7268 + d62d856 + 4642db7, published earlier today)
+shipped the three intended fixes correctly — tarball verification
+confirmed `0 SUBCOMMANDS` matches in both `bin/burnctl.js` and `cli.py`.
+However, COMMIT 1's shim passthrough fix UNMASKED a pre-existing
+v4.5.0 bug in `db.py`:
+
+- `db.get_conn()` called `sqlite3.connect()` unconditionally, which
+  silently auto-creates an empty schemaless file when no DB exists.
+- `cmd_daily` (which doesn't go through `init_db`) now reached cli.py
+  via the new passthrough, called `daily_report.build_daily_brief()`,
+  which called `db.get_conn()`, which auto-created an empty DB at the
+  npx install dir.
+- 7 subsequent commands (`subagent-audit`, `overhead-audit`,
+  `compact-audit`, `fix-scoreboard`, `work-timeline`, `claudemd-audit`,
+  `why-limit`) used their own per-module `load_db()` which found that
+  empty file (existence check passed) and tracebacked on
+  `OperationalError: no such table: sessions`.
+
+Pre-publish daily_qa scored `19/20 WOW · 0 OK · 1 DOD` because in
+v4.5.3 the SUBCOMMANDS allowlist rejected `daily` at the shim, no
+empty DB was ever created, and the cascade never fired. Post-publish
+v4.5.4 daily_qa scored `9/20 WOW · 2 OK · 9 DOD` with 8 commands
+tracebacking. The v4.5.4 release was technically correct (shipped
+what we wanted) but exposed a v4.5.0 latent bug that needed v4.5.5
+to close.
+
+### Fixed
+- **`db.py:get_conn()` no longer auto-creates empty DBs (8ef7f21).**
+  Refactored to share an `_open_or_create(path)` private helper with
+  `init_db()`. `get_conn()` now mirrors the canonical
+  `overhead_audit.py::load_db()` pattern: existence-check both
+  `DB_PATH` (local-checkout / npx-install) and
+  `~/.burnctl/data/usage.db`; return the first existing one or `None`.
+  `init_db()` calls `_open_or_create(DB_PATH)` directly so first-run
+  creation is preserved bit-for-bit. `_lock_db_file()` parameterized
+  with `path=None` default for backwards-compat with the existing
+  call site at `db.py:541`. `DB_PATH` module constant preserved as
+  the canonical create-target, so `cli.py:1517,1586` imports and 4
+  test files' monkey-patching pattern (`db.DB_PATH = self.tmp_db`)
+  continue to work unchanged.
+  Files: `db.py`.
+- **`daily_report.build_daily_brief()` None-guard (8ef7f21).** New
+  early-return after the `get_conn()` call returns a minimal-shaped
+  8-key brief (`baseline.available=False`, `runtime.available=False`,
+  `recommendations=[]`, `trends={}`, `trend_caveat="No burnctl
+  database yet — run `burnctl scan` first"`, `last_outcome=None` +
+  `date`/`weekday`). `cmd_daily`'s existing printer renders all
+  three `score_daily` headers (`OVERHEAD TODAY`, `RUNTIME BURN`,
+  `TOP ACTIONS TODAY`) via the existing `available=False` ELSE
+  branches, so the gate WOWs the no-DB case with `(3/3 sections)`.
+  Files: `daily_report.py`.
+
+### Architecture Decisions
+- **`get_conn()` is read-only; `init_db()` is the only auto-create
+  path.** Canonical separation that should have existed since v4.5.0.
+  Auto-create stays centralized in `init_db()`, called by every
+  cmd_* handler in cli.py except `cmd_daily` and `cmd_dashboard`
+  (server). Per-caller None-handling becomes the contract for every
+  read-side caller (TD-13 Phase 2).
+- **`DB_PATH` preserved as a module-level constant.** Original
+  v4.5.5 spec considered a `CANDIDATES` list constant; verification
+  showed 2 production imports (cli.py:1517, 1586) and 4 test files
+  monkey-patching `db.DB_PATH` would silently break, so the inline
+  `(DB_PATH, ~/.burnctl/...)` tuple inside `get_conn()` was chosen
+  instead. Zero scope creep into other files.
+
+### Known Issues / Not Done
+- **TD-13 Phase 2 (~108 caller sites still traceback on None).**
+  The `daily_report` None-guard is Phase 1; Phase 2 audits the
+  no-init-db callers (`insights.py:59`, `fix_generator.py:703`,
+  `waste_patterns.py:359`, plus ~70 server.py request-path sites
+  that may not go through init_db) and adds None-guards to each.
+  Deferred to v4.5.6.
+- **TD-13 Phase 3 — load_db / get_conn duplication consolidation
+  per TD-01.** 10 modules each define their own `load_db()` plus
+  `db.get_conn()` exists separately. Single canonical
+  `db.open_local_db()` deferred to v4.6.0.
+- **TD-12 — daily_qa.py exit code on `dod_count=1` exited 0** in
+  this session's pre-publish run (should be 2 per CLAUDE.md
+  contract). Audit deferred — does not block v4.5.5.
+- **TD-14 — test pollution into `~/.burnctl/data/usage.db`.**
+  During v4.5.5 unittest validation, an empty DB (4096 bytes, no
+  tables, mtime 11:12 UTC) appeared post-run. Pre-existing test
+  isolation issue, unrelated to the fix. Filed as TD-14, P3.
+
+### Test + QA gate
+- **80/80 unit tests pass** (DB_PATH preserved as the existing
+  monkey-patch hook, so all 4 test files' isolation pattern still
+  works).
+- **End-to-end no-DB simulation:** `cli.cmd_daily()` with both
+  candidates verified non-existent prints all 3 `score_daily`
+  headers via existing `available=False` ELSE branches; exit 0.
+- **Real-VPS happy path verified** via `python3 -c "from db import
+  get_conn; print(get_conn())"` from `~/projects/burnctl` —
+  returns Connection on the 17.66 MB live DB.
+
+### TD entries filed in this session
+- **TD-12** — daily_qa exit-code semantics (P3)
+- **TD-13** — db.get_conn Phase 2 caller hardening (P2) + Phase 3
+  consolidation per TD-01 (P3, v4.6.0)
+- **TD-14** — unittest test pollution into `~/.burnctl/data/usage.db` (P3)
