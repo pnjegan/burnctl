@@ -270,6 +270,22 @@ def build_daily_brief(conn=None) -> Dict[str, Any]:
     own = conn is None
     if own:
         conn = get_conn()
+    if conn is None:
+        # No DB exists yet — return a minimal-shaped brief so cmd_daily's
+        # printer renders the standard headers via the existing
+        # available=False branches. See TD-13 Phase 2 for full caller
+        # hardening across other commands.
+        today_dt = datetime.date.today()
+        return {
+            "date": today_dt.isoformat(),
+            "weekday": today_dt.strftime("%A"),
+            "baseline": {"available": False},
+            "runtime": {"available": False},
+            "recommendations": [],
+            "trends": {},
+            "trend_caveat": "No burnctl database yet — run `burnctl scan` first",
+            "last_outcome": None,
+        }
     try:
         today_dt = datetime.date.today()
         today = today_dt.isoformat()

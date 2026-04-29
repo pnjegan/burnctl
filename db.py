@@ -8,12 +8,14 @@ import re
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "usage.db")
 
 
-def _lock_db_file():
+def _lock_db_file(path=None):
     """Enforce 0600 perms on the SQLite file and its WAL/SHM side files.
     The DB holds plaintext claude.ai session keys and the dashboard/sync
     auth tokens — it must not be world-readable."""
+    if path is None:
+        path = DB_PATH
     for suffix in ("", "-wal", "-shm"):
-        p = DB_PATH + suffix
+        p = path + suffix
         if os.path.exists(p):
             try:
                 os.chmod(p, stat.S_IRUSR | stat.S_IWUSR)
@@ -21,15 +23,33 @@ def _lock_db_file():
                 pass
 
 
-def get_conn():
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, timeout=30)
+def _open_or_create(path):
+    """Open or create SQLite connection at path with WAL pragmas + perm-locking.
+
+    Internal helper. Used by get_conn() (after existence check) and by
+    init_db() (for first-time creation). Does NOT initialize schema.
+    """
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    conn = sqlite3.connect(path, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=30000")
     conn.execute("PRAGMA synchronous=NORMAL")
-    _lock_db_file()
+    _lock_db_file(path)
     return conn
+
+
+def get_conn():
+    """Open existing burnctl DB; return None if not found.
+
+    Mirrors canonical overhead_audit.py::load_db() pattern. Does NOT
+    auto-create — that belongs in init_db(). Callers must handle None;
+    see TD-13 for per-caller hardening status.
+    """
+    for path in (DB_PATH, os.path.expanduser("~/.burnctl/data/usage.db")):
+        if os.path.exists(path):
+            return _open_or_create(path)
+    return None
 
 
 def _column_exists(conn, table, column):
@@ -45,7 +65,7 @@ def _table_exists(conn, table):
 
 
 def init_db():
-    conn = get_conn()
+    conn = _open_or_create(DB_PATH)
 
     # Core tables
     conn.executescript("""

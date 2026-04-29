@@ -184,6 +184,64 @@ Last consolidated: 2026-04-24 (v4.5.3 gap-closure session).
   need isolated harness); `fix` (subcommand router).
 - **Added:** v4.5.4 hotfix audit 2026-04-29.
 
+### TD-12 — daily_qa.py exit code on DOD inconsistent with documented contract
+- **Status:** open
+- **Priority:** P3 (gate semantics — affects pre-publish guard reliability)
+- **Files:** `daily_qa.py` (the post-`run_all_tests` exit logic)
+- **Context:** CLAUDE.md states "Exit 0 (all WOW) → safe; Exit 1 (any
+  OK) → review; Exit 2 (any DOD) → STOP. Do not publish." Observed in
+  v4.5.4 hotfix: pre-publish run with `dod_count=1` exited 0 (should
+  be 2); post-publish run with `dod_count=9` correctly exited 2. The
+  contract holds for the DOD>1 case but appears soft for DOD=1.
+- **Fix:** audit the exit-code mapping in `daily_qa.py`. Likely cause:
+  the WOW count is checked first and the DOD branch is gated on a
+  condition that's silently false in some configurations. Confirm by
+  running `python3 daily_qa.py; echo $?` against a synthetic DOD-only
+  state. Document the actual semantics in CLAUDE.md if the contract
+  is intentionally weaker than documented.
+- **Acceptance:** any run with `dod_count > 0` exits 2; any run with
+  `ok_count > 0` and `dod_count == 0` exits 1; clean run exits 0.
+- **Added:** v4.5.4 hotfix audit 2026-04-29.
+
+### TD-13 — db.py:get_conn() phase-2 caller hardening + path-discipline
+- **Status:** open (Phase 1 closed in v4.5.5)
+- **Priority:** P2 for Phase 2 (108 caller sites still traceback on
+  None); P3 for Phase 3 (path consolidation per TD-01)
+- **Files:** `db.py:get_conn`, plus 109 caller sites across `server.py`,
+  `cli.py`, `mcp_server.py`, `claude_ai_tracker.py`, `daily_report.py`
+  (Phase 1 done), `insights.py:59`, `fix_generator.py:703`,
+  `waste_patterns.py:359`.
+- **Context:** v4.5.4's daily_qa post-publish run exposed a cascade —
+  cmd_daily's daily_report.get_conn() was auto-creating an empty DB
+  at the npx install dir, then 7 subsequent commands' load_db() found
+  that empty file and tracebacked on missing tables. v4.5.5 fixes the
+  root by making get_conn() existence-check + return None, and adds
+  a None-guard to daily_report.build_daily_brief() so the headline
+  v4.5.0 command renders a graceful "no data yet" brief instead of
+  tracebacking. The remaining caller sites still traceback on None
+  (AttributeError instead of OperationalError) — a clean DB-boundary
+  failure but still a bad UX for fresh-install users.
+- **Acceptance (Phase 1, closed in v4.5.5):** db.get_conn() returns
+  None when no DB exists; init_db() preserves auto-create via
+  `_open_or_create` helper. daily_report.build_daily_brief() handles
+  None gracefully (returns minimal-shaped brief; cmd_daily printer
+  renders all standard headers via existing available=False branches).
+- **Acceptance (Phase 2, deferred to v4.5.6):** every other caller of
+  db.get_conn() handles None gracefully — graceful "no data yet"
+  placeholders instead of tracebacks. Note: most cli.py cmd_* handlers
+  call init_db() before get_conn(), which auto-creates, so they're
+  already safe in practice. The risk surface is the no-init-db
+  callers: `daily_report.py` (Phase 1 done), `insights.py:59`,
+  `fix_generator.py:703`, `waste_patterns.py:359`, plus any of the
+  ~70 server.py sites that don't go through init_db on the request
+  path. Audit each, add None-guards, ship v4.5.6.
+- **Acceptance (Phase 3, deferred to v4.6.0):** consolidate the
+  load_db / get_conn duplication per TD-01. Today, 10 modules each
+  define their own `load_db()` plus `db.get_conn()` exists separately.
+  After Phase 3, single canonical `db.open_local_db()` (or similar)
+  used everywhere, with a clear "create vs read-only" semantic.
+- **Added:** v4.5.4 post-publish smoke 2026-04-29.
+
 ---
 
 ## Resolved in v4.5.3 (this session)
