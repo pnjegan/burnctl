@@ -2754,3 +2754,86 @@ d65560f merge: rc.4 verdict + dedup fixes                                       
   `researcher-staleness 13.6 h "fresh but >12 h"`).
 - **burnctl-reviewer: APPROVE.** No critical flags; all 7 file-by-file
   checks PASS.
+
+## [2026-04-29] Session 42 — v4.5.4 hotfix — shim passthrough + QA gate hardening + baseline list-guard
+
+### Why this hotfix
+- v4.5.0's flagship `daily` command was unreachable via `npx burnctl
+  daily` because `bin/burnctl.js` had a stale subcommand allowlist
+  (last updated v4.3) that never picked up the new command.
+- `daily_qa.py` silently scored the failure as OK due to a "pending
+  publish" whitelist in `score_smoke()` that had no symmetric flip back
+  to DOD post-publish, so the regression went undetected for 5 days
+  on `npm @latest`.
+- `baseline_scanner._scan_mcps()` crashed with
+  `AttributeError: 'list' object has no attribute 'keys'` on list-shaped
+  `~/.claude.json` configs, silently dropping `baseline_readings` rows
+  for affected Mac users via the try/except in
+  `scanner._capture_daily_baseline`.
+
+### Fixed
+- **Shim allowlist drift (07f7268)** — `bin/burnctl.js` no longer
+  hardcodes a `SUBCOMMANDS` Set. Any non-flag, non-`dashboard` first
+  arg now passes straight through to `cli.py`, which is the single
+  source of truth for subcommand validation. `cli.py`'s unknown-command
+  branch is normalised in the same commit to match the previous shim
+  error format byte-for-byte (`burnctl: unknown command "..."`,
+  stderr, terse pointer).
+  Files: `bin/burnctl.js`, `cli.py:2371-2374`.
+- **daily_qa coverage gap (d62d856)** — `score_smoke()` "unknown
+  command" outcome flipped from OK → DOD; substring match made
+  case-insensitive via `.lower()` so future `Unknown command:` casing
+  variants don't slip through. New `score_daily()` scorer with
+  at-least-one-of `OVERHEAD` / `RUNTIME BURN` / `TOP ACTIONS` header
+  check (defends against silent empty renders that `score_smoke` would
+  pass on exit 0). New TESTS entry wires `daily` into the gate. New
+  TD-11 entry in `TECH_DEBT.md` documents the remaining 14 read-only
+  commands without TESTS coverage.
+  Files: `daily_qa.py`, `TECH_DEBT.md`.
+- **Baseline list-guard (4642db7)** — `baseline_scanner._scan_mcps()`
+  now type-checks `data` and the chosen `mcpServers`/`servers` value
+  before calling `.get()` / `.keys()`. Two `isinstance()` guards: zero
+  behavior change for dict-shaped configs, clean fallback to empty MCP
+  list for list-shaped ones. Adds 2 regression tests in new
+  `tests/test_baseline_list_guard.py` covering both list-shape edge
+  cases (top-level list and list-as-mcpServers-value).
+  Files: `baseline_scanner.py`, `tests/test_baseline_list_guard.py`.
+
+### Architecture Decisions
+- **`bin/burnctl.js` no longer maintains its own subcommand
+  allowlist.** `cli.py` is the single source of truth for command
+  validation. The shim's job is reduced to: detect dashboard mode vs
+  subcommand pass-through, handle `--help`/`--version`, and reject
+  flag-shaped first args. Eliminates the entire class of shim/cli drift
+  bugs that bit v4.5.0.
+- **`score_smoke` "unknown command" whitelist removed — drift is a
+  release defect, not a pre-publish exemption.** The original whitelist
+  was added to avoid catch-22s when a command existed locally but not
+  yet on npm. With the passthrough fix making cli.py the single arbiter,
+  the drift class is gone — but enforcing DOD at the gate prevents any
+  future regression.
+
+### Known Issues / Not Done
+- **TD-11** — 14 read-only commands still without TESTS coverage in
+  `daily_qa.py`: `show-other`, `stats`, `insights`, `window`, `waste`,
+  `fixes`, `keys`, `realstory`, `burnrate`, `loops`, `block`,
+  `statusline`, `claude-ai`, `fix-rules`. Deferred from this hotfix
+  (P3, next minor). Each needs scorer selection (smoke vs custom) and
+  some need fixture setup for thin-data installs.
+- **Mac smoke re-test pending** — VPS-side `python3 daily_qa.py` is
+  expected to flip the `daily` test from DOD → WOW once `npm publish`
+  for v4.5.4 lands and `npx burnctl@latest` resolves to the fixed
+  shim. Final user-facing validation (Mac, fresh `/tmp`, no cache)
+  runs after the VPS proof step succeeds.
+- **`daily_qa.py` exit code on DOD** — observed exit 0 in this
+  session's pre-publish run despite `dod_count=1`, contradicting the
+  documented "Exit 2 (any DOD) → STOP" semantics in CLAUDE.md.
+  Investigation deferred — out of scope for this hotfix; worth a
+  separate TD entry once confirmed.
+
+### Test + QA gate
+- **80/80 tests green** (was 78 + 2 new in
+  `tests/test_baseline_list_guard.py`). Suite runs in ~10s.
+- **Pre-publish daily_qa: 19/20 WOW, 0 OK, 1 DOD.** The single DOD is
+  the new `daily` test correctly flagging the v4.5.3-on-registry shim
+  drift — meta-recursive but expected. Will flip to WOW post-publish.
