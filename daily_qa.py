@@ -252,19 +252,49 @@ def score_api_stats(status, body):
 def score_smoke(exit_code, output):
     """Generic smoke test: ran to completion, no traceback, no leaks.
 
-    A command that fails with `unknown command` on `npx burnctl@latest` is
-    pending publish (added locally but not yet on npm). Mark OK — this
-    is by design to avoid a catch-22 on pre-publish gate runs.
+    A command that returns `unknown command` from the launcher means the
+    shim and cli.py have drifted — the launcher rejected something cli.py
+    knows about. That's a release defect, fail loud.
     """
     if has_traceback(output):
         return DOD, "traceback"
     if has_maintainer_leak(output):
         return DOD, "maintainer-path leak in output"
-    if "unknown command" in output:
-        return OK, "pending publish — unknown in published version"
+    if "unknown command" in output.lower():
+        return DOD, "shim/cli.py drift — command unreachable via launcher"
     if exit_code != 0:
         return DOD, f"exit {exit_code}"
     return WOW, "ran clean"
+
+
+def score_daily(exit_code, output):
+    """`burnctl daily` — verifies the brief actually rendered.
+
+    score_smoke would pass any non-crashing exit-0 output. The daily
+    brief has structured sections; if build_daily_brief() silently
+    returned an empty/partial result, smoke check would miss it.
+    Header check defends against 'ran clean but rendered nothing'.
+    """
+    if has_traceback(output):
+        return DOD, "traceback"
+    if has_maintainer_leak(output):
+        return DOD, "maintainer-path leak in output"
+    if "unknown command" in output.lower():
+        return DOD, "shim/cli.py drift — command unreachable via launcher"
+    if exit_code != 0:
+        return DOD, f"exit {exit_code}"
+
+    # Header check — at least one section must have rendered.
+    # OVERHEAD comes from baseline_scanner (works on thin-data installs).
+    # RUNTIME BURN / TOP ACTIONS depend on session data (may be empty
+    # on a fresh DB), so OR-logic prevents false DODs in /tmp test runs.
+    output_upper = output.upper()
+    headers_found = [h for h in ("OVERHEAD", "RUNTIME BURN", "TOP ACTIONS")
+                     if h in output_upper]
+    if not headers_found:
+        return DOD, "daily brief rendered no recognized sections"
+
+    return WOW, f"daily brief OK ({len(headers_found)}/3 sections)"
 
 
 def score_api_projects(status, body):
@@ -376,6 +406,7 @@ def check_researcher_staleness():
 TESTS = [
     # npx commands — run from fresh /tmp
     ("audit",            "npx",  "audit",                 score_audit),
+    ("daily",            "npx",  "daily",                 score_daily),
     ("resume-audit",     "npx",  "resume-audit",          score_resume_audit),
     ("peak-hours",       "npx",  "peak-hours",            score_peak_hours),
     ("version-check",    "npx",  "version-check",         score_version_check),

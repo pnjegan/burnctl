@@ -161,6 +161,29 @@ Last consolidated: 2026-04-24 (v4.5.3 gap-closure session).
   non-JSON, `:721` no-cache on a specific path) and leave as-is.
 - **Added:** auditor 2026-04-24; global default closed in v4.5.3.
 
+### TD-11 — daily_qa.py TESTS coverage gap (15 read-only commands)
+- **Status:** open
+- **Priority:** P3 (next minor — not blocking v4.5.4)
+- **Files:** `daily_qa.py:376-396` (TESTS array), `cli.py:2326-2366` (dispatch dict)
+- **Context:** TESTS exercises 14 of cli.py's 39 dispatch entries. The
+  v4.5.0 `daily` command was missing from TESTS, which is why its
+  shim-drift regression went undetected for 5 days post-publish.
+  `daily` is being added in v4.5.4 (this hotfix).
+- **Fix:** add a TESTS entry per remaining read-only command. Each needs
+  scorer selection (score_smoke vs custom); some may need fixture setup
+  for thin-data installs. The 14 commands without smoke coverage:
+  `show-other`, `stats`, `insights`, `window`, `waste`, `fixes`, `keys`,
+  `realstory`, `burnrate`, `loops`, `block`, `statusline`, `claude-ai`,
+  `fix-rules`.
+- **Acceptance:** all 14 listed commands have a TESTS entry; `daily_qa.py`
+  exits 0 with WOW or expected OK for each on a fresh DB.
+- **Untestable in this gate (documented, not deferred):** `dashboard`,
+  `init`, `sync-daemon`, `backup`, `restore` (server / interactive /
+  daemon / mutating); `qa` (recursion); `scoreboard` (alias of
+  `fix-scoreboard`); `scan`, `export`, `measure`, `mcp` (state-mutating,
+  need isolated harness); `fix` (subcommand router).
+- **Added:** v4.5.4 hotfix audit 2026-04-29.
+
 ---
 
 ## Resolved in v4.5.3 (this session)
