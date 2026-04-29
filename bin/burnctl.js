@@ -10,36 +10,11 @@ const { version: VERSION } = require('../package.json');
 const REPO = 'https://github.com/pnjegan/burnctl';
 const INSTALL_DIR = path.join(os.homedir(), '.burnctl');
 
-// Subcommands that pass through to python cli.py.
-// First-arg match wins; we pipe stdio and exit with the child's code.
-const SUBCOMMANDS = new Set([
-  'audit', 'burnrate', 'loops', 'block', 'statusline',
-  'fix', 'scan', 'stats', 'measure', 'backup', 'restore',
-  'realstory', 'insights', 'waste', 'show-other', 'window',
-  'export', 'fixes', 'init', 'mcp', 'keys', 'claude-ai',
-  'sync-daemon',
-  // v4.0.4 additions
-  'version-check', 'peak-hours', 'resume-audit', 'variance',
-  // v4.0.7 additions
-  'subagent-audit', 'overhead-audit', 'compact-audit',
-  'fix-scoreboard', 'scoreboard',
-  // v4.0.9 additions
-  'work-timeline',
-  // v4.0.11 additions
-  'qa',
-  // v4.1 additions
-  'claudemd-audit', 'mcp-audit',
-  // v4.2 additions
-  'why-limit',
-  // v4.3 additions
-  'fix-rules',
-]);
-
 const args = process.argv.slice(2);
 const first = args[0];
 
 // ── Subcommand pass-through (must run BEFORE --help so `burnctl audit --help` reaches cli.py)
-if (first && SUBCOMMANDS.has(first)) {
+if (first && !first.startsWith('-') && first !== 'dashboard') {
   checkPython();
   const { cli, cwd } = getCliPath();
   const proc = spawn('python3', [cli, ...args], { stdio: 'inherit', cwd });

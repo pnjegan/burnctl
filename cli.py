@@ -2369,8 +2369,8 @@ def main():
     if handler:
         handler()
     else:
-        print(f"Unknown command: {cmd}")
-        print(HELP_TEXT.format(vps_ip=VPS_IP))
+        print(f'burnctl: unknown command "{cmd}"', file=sys.stderr)
+        print('Run `burnctl --help` for the command list.', file=sys.stderr)
         sys.exit(1)
 
 
