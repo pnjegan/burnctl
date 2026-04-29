@@ -249,9 +249,13 @@ def _scan_mcps() -> List[Dict[str, Any]]:
         except (OSError, ValueError) as e:
             _warn(f"could not parse {cfg}: {e}")
             continue
+        if not isinstance(data, dict):
+            continue
         # ~/.claude.json uses "mcpServers"; ~/.claude/.mcp.json uses "servers";
         # ~/.claude/settings.json uses "mcpServers". Prefer non-empty.
         candidate = data.get("mcpServers") or data.get("servers") or {}
+        if not isinstance(candidate, dict):
+            candidate = {}
         if candidate:
             chosen_config = cfg
             servers_map = candidate
