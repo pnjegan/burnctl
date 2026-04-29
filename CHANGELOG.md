@@ -2942,3 +2942,32 @@ to close.
 - **TD-13** — db.get_conn Phase 2 caller hardening (P2) + Phase 3
   consolidation per TD-01 (P3, v4.6.0)
 - **TD-14** — unittest test pollution into `~/.burnctl/data/usage.db` (P3)
+
+## [2026-04-29] Session 43 — Day close-out
+
+End-of-day marker. Today's substantive work is documented as the
+two preceding entries (Session 42 — v4.5.4 hotfix; Session 42b —
+v4.5.5 hotfix-on-hotfix), plus a full-day narrative at
+`docs/sessions/2026-04-29-fullday.md`.
+
+### What shipped today
+- v4.5.3 backlog reconciliation (push + tags)
+- v4.5.4 — shim passthrough + QA gate hardening + baseline list-guard
+- v4.5.5 — db.get_conn no-auto-create + daily None-guard
+
+### Final state
+- npm @latest = 4.5.5
+- pm2 serving v4.5.5, /api/health clean
+- 80/80 unit tests green
+- Tags v4.5.1 / v4.5.2 / v4.5.3 / v4.5.4 / v4.5.5 all aligned
+
+### Tech debt filed today
+- TD-11 (P3): daily_qa TESTS gap (14 untested read-only commands)
+- TD-12 (P3): daily_qa exit code semantics on `dod_count=1`
+- TD-13 (P2 + P3): get_conn caller hardening Phase 2; load_db
+  consolidation Phase 3
+- TD-14 (P3): unittest test pollution into ~/.burnctl/data/usage.db
+
+### Known Issues / Not Done
+- Mac smoke re-test on v4.5.5 — to be run by user from a fresh
+  Mac terminal
