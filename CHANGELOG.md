@@ -2522,3 +2522,235 @@ d65560f merge: rc.4 verdict + dedup fixes                                       
 - **Verdict staleness gap** deferred to separate fix (see `TECH_DEBT.md`). Mitigation in place: cron self-corrects every 5 min, manual `auto_measure_pending()` kicks immediately.
 - **Zero-session UX framing** for `waste_events` verdicts deferred (`TECH_DEBT.md`). Fix 12 currently renders `worsened` despite zero post-apply sessions — numerically honest but potentially misleading.
 - **No `npm publish`** this session. Release is GitHub-tag-only (rc.4 is a release candidate, not a stable release). Deploy surface limited to this VPS + pm2 restart.
+
+## [2026-04-24] Session 40 — v4.5.0 Intelligence Layer + v4.5.1 version-check patch
+
+### Added
+- **burnctl v4.5.0 Intelligence Layer** — three linked capabilities per PRD:
+  - `baseline_scanner.py` — scans `~/.claude/agents/`, `~/.claude/skills/`, MCPs
+    (from `~/.claude.json` / `settings.json` / `.mcp.json`), and
+    `~/.claude/CLAUDE.md`. Tokenised via tiktoken (cl100k_base) with
+    char-approx fallback. First scan: 128,147 tokens / 106 sources
+    (80% skills, 17% agents, 1% claudemd, 1% MCPs).
+  - `baseline_readings` table + helpers in `db.py` — time-series overhead
+    snapshots, one row per UTC day (latest-wins).
+  - `daily_report.py` — single source of truth for the daily brief
+    (CLI + API share).
+  - `burnctl daily` CLI command — bar-separated brief: OVERHEAD /
+    RUNTIME BURN / EST. DAILY COST / WHAT CHANGED / TOP ACTIONS / TRENDS /
+    LAST ACTION OUTCOME.
+  - `/api/daily` endpoint + dashboard brief card (top-of-page, XSS-safe
+    via existing `esc()`).
+  - 4 new insight rules: `baseline_sos_spike`, `baseline_dod_growing`,
+    `dead_overhead_source`, `claudemd_bloat`.
+  - Scanner end-of-run hooks: once-per-day baseline capture +
+    `daily_snapshots` auto-populate. Both wrapped try/except so neither
+    can break the main JSONL scan.
+  - 16 new tests (TestEstimateTokens, TestScanBaseline, TestDbBaselineHelpers,
+    TestBaselineInsights, TestDailyReport). Full suite 57/57 green.
+  Why: closes the PRD gap — burnctl now answers "why am I burning this much"
+  and "what should I change tomorrow", not just "how much did I burn".
+  Files: `baseline_scanner.py`, `daily_report.py`, `db.py`, `scanner.py`,
+  `insights.py`, `cli.py`, `server.py`, `templates/dashboard.html`,
+  `tests/test_baseline_scanner.py`, `requirements.txt`, `package.json`,
+  `CHANGELOG.md`.
+
+### Fixed
+- **v4.5.1 `version-check`** — now flags v2.1.118 as CRITICAL (3 confirmed
+  regressions incl. #52578 project-root data-loss, #52345 Team `/usage`,
+  #52307 ANTHROPIC_BASE_URL 401) and v2.1.119 as WARNING (carries unfixed
+  #52578).
+  Why: saves users from running a version that silently deletes
+  `hooks/ HEAD objects refs config` at project root on every Bash tool call.
+  Files: `version_check.py`, `package.json`.
+
+### Architecture Decisions
+- **`daily_report.py` as shared source of truth.** CLI and API both format
+  the same structured dict. Business logic lives in one place, each surface
+  only formats.
+  Why: avoids the drift pattern where CLI output and web UI diverge.
+  Impact: future brief consumers (email digest, Slack webhook) reuse
+  `build_daily_brief()`.
+- **MCP token count is a fixed 500-tok estimate** (documented with
+  module-level comment).
+  Why: exact MCP injection accounting not yet published by Anthropic;
+  500 is a safe mid-band.
+  Impact: refine once per-server token cost is published.
+- **tiktoken is OPTIONAL.** Char-approx fallback (`len * 0.25`) preserves
+  the zero-pip-dep property of core burnctl.
+  Why: baseline scanner must ship via npm without forcing Python package
+  installs.
+- **Logged v4.5.1 debt items to `TECH_DEBT.md`** from auditor findings:
+  (1) recommendation ranking is effectively FIFO not value-ranked because
+  existing insights emit `savings`/`cost`/`cost_usd` keys, not `usd_monthly`;
+  (2) per-project CLAUDE.md missed — scanner walks `~/.claude/projects/`
+  (Claude Code JSONL log dir) not real repo roots.
+
+### Known Issues / Not Done
+- **v4.5.0 is merged + pushed to `origin/main` + tagged `v4.5.0` on origin**,
+  but `npm publish` was not run (awaits `burnctl-tester` pass + human
+  go-ahead per Guardian Pipeline).
+- **v4.5.1 commit (`4acf995`) is local only** — not pushed, not published.
+  pm2 still serving 4.5.0, so `/api/health` reports `4.5.0` while
+  `package.json` reports `4.5.1` (single DOD in post-patch daily_qa;
+  expected staging artifact).
+- **P2 items deferred to v4.5.1 implementation session:** add
+  `savings`/`cost` to saving-key aliases in `daily_report.py:135-140`;
+  fix per-project CLAUDE.md discovery path in `baseline_scanner.py`.
+
+### Backups
+- Pre-change file copies saved to `backups/pre-v4.5.0-20260424-040035/`
+  (git-ignored) — full revert path for every modified file.
+
+## [2026-04-27] Session 41 — v4.5.3 P2 gap closure + reviewer APPROVE
+
+### Fixed
+- **G-03 dashboard brief card was stale across midnight UTC** → `renderDailyBrief()`
+  now invoked inside `refresh()` timer alongside other card renders.
+  Why: dashboards left open across day boundaries showed yesterday's overhead/
+  runtime numbers without any indicator they were stale.
+  Files: `templates/dashboard.html:1932`.
+- **A-06 TOP ACTIONS sorted FIFO instead of by money-at-stake** → added
+  `savings`, `cost`, `cost_usd` aliases to the saving extraction chain.
+  Why: existing `insights.py` rules emit those keys; the v4.5.0 ranking only
+  checked `usd_monthly`/`delta_usd_monthly`/`estimated_monthly_usd`, so every
+  non-baseline rec showed `$0` and the sort collapsed to insight_id ASC.
+  Files: `daily_report.py:194-205`.
+- **F-09 DISABLE_UPDATES doc missing from v2.1.119 warning block** → added
+  the "Pin your version with: export DISABLE_UPDATES=1" line.
+  Why: parity with the v2.1.118 critical block; users on 119 still need to
+  know how to pin.
+  Files: `version_check.py:134`.
+- **N-1 no default Cache-Control on JSON responses** → `_serve_json` now
+  sends `Cache-Control: no-cache, must-revalidate` for every API call.
+  Why: live dashboard data was at the mercy of browser/proxy heuristics.
+  The two non-JSON endpoints with explicit overrides (favicon `:320`, SSE
+  `:721`) don't call `_serve_json`, so no collision.
+  Files: `server.py:1571`.
+- **M-3 silent burnctl-researcher cron failure not caught by daily_qa** →
+  new `check_researcher_staleness()` test. DOD if `research-reports/latest.md`
+  (or newest dated file as fallback) is missing or >25 h old; OK 12-25 h;
+  WOW <12 h.
+  Why: stale research-reports silently break pre-pitch intel without anyone
+  noticing.
+  Files: `daily_qa.py:336-380`, plus wiring at `:447-460`.
+- **E-01 per-project CLAUDE.md never scanned by baseline scanner** → new
+  `_discover_project_roots()` reads `BURNCTL_PROJECT_ROOTS` env var (colon-
+  split) plus default parents `~/projects ~/code ~/dev ~/src ~/work`. Walks
+  each project root for `CLAUDE.md`. Backward-compat scan of
+  `~/.claude/projects/*` preserved.
+  Why: the v4.5.0 baseline scanner walked Claude Code's JSONL session-log
+  dir, not real repo roots — `claudemd_bloat` only ever fired on the global
+  `~/.claude/CLAUDE.md`. Live verification now finds 5 CLAUDE.md files
+  including `~/projects/burnctl/CLAUDE.md`.
+  Files: `baseline_scanner.py:51-59,107-145,272-330`.
+- **N-2 baseline scanner had no symlink cycle guard** → new
+  `_already_seen(path, seen)` helper with realpath-based dedup; one `seen`
+  set per `scan_baseline()` call passed into all three path-walking scans.
+  Why: 5+ symlinks observed in `~/.claude/skills/`. Cheap insurance against
+  any future ancestor-pointing symlink causing an infinite walk.
+  Files: `baseline_scanner.py:73-89,177,205,275,296,315,345`.
+- **M-2 baseline_readings table grew unbounded** → new
+  `db.prune_old_baseline_readings(days=90)` wired into `scanner.py`
+  end-of-run after `_capture_daily_baseline`. Strict `<` cutoff so today's
+  row is preserved; parameterised SQL.
+  Why: 365+ rows/year for long-lived installs would slow trend queries.
+  90 days covers DoD/WoW/7-day-drift rules + 14-day brief sparkline with
+  headroom.
+  Files: `db.py:1360-1389`, `scanner.py:14,926-934`.
+- **`_capture_daily_baseline` claimed "Never raises" but propagated
+  `scan_baseline()` failures** → wrapped the inner call in try/except so
+  the docstring matches reality. Surfaced by the new I-02 test
+  `test_baseline_failure_is_swallowed`.
+  Why: the outer `_scan_all_locked` caught the exception, but
+  defence-in-depth matches the documented contract.
+  Files: `scanner.py:788-815`.
+
+### Added
+- **F-03 `tests/test_version_check.py`** — 11 unit tests covering
+  `classify_version()` (severity, reason) tuple contract: 2.1.118 critical,
+  2.1.119 warning, 2.1.120 clean, 69-89 cache-regression range, 68/90
+  boundaries, malformed/empty/v3.x major all clean. Plus 3 `is_bad_version`
+  regression tests.
+- **I-02 `tests/test_scanner_hooks.py`** — 6 integration tests covering
+  `_capture_daily_baseline` (first-call write, same-day idempotency, scan
+  failure swallowed) and `_populate_daily_snapshots` (today aggregation,
+  idempotent upsert). Uses `_IsolatedDbCase` base with
+  `tempfile.TemporaryDirectory` — no production DB writes.
+- **M-1 `docs/f4-design.md`** — 163-line design doc closing 4-session-old
+  F4 deferral. Documents both failure modes (zero-floor on empty
+  after-sample; spike-baselined fix), reviews 4 options
+  (A rolling-median baseline / B minimum after-sample gate / C confidence
+  interval / D do nothing), picks Option B for v4.7 with explicit revisit
+  triggers for A and C.
+- **M-4 `TECH_DEBT.md` consolidated to single `TD-N` scheme** — 33 unified
+  entries replacing the previous mix of `[section]` / `P2-N` / `TD-N`
+  headers. Each carries Status, Priority, File pointer, one-line Fix, and
+  Added origin. v4.5.3-resolved items called out in their own section.
+  Original 2026-04-23 log preserved verbatim under "Archive".
+
+### Removed
+- **Two stashes from `git stash list`** — `stash@{0} session37-done-entry-wip`
+  and `stash@{1} ux3-state2-changelog-wip`. Both contained ONLY CHANGELOG.md
+  text about already-shipped work (Session 37 clean-mac UX + Session 39
+  security-incident remediation). Inspected before dropping; verified the
+  underlying code/notice was already in the repo (e.g. README.md security
+  notice present). `git stash list` now empty.
+  Files: stash refs only.
+
+### Architecture Decisions
+- **F4 saving-attribution: ship Option B (minimum after-sample gate) in
+  v4.7. Park Option A. Defer Option C indefinitely.**
+  Why: Option B is surgical, fixes failure mode A directly, and reuses the
+  existing `MIN_SESSIONS_FOR_VERDICT` constant — just extends its scope to
+  cover the directional branches, not only the fallthrough. Option A
+  (rolling-median baseline) is the more correct fix for failure mode B but
+  needs a schema change and 7 days of pre-fix data per project.
+  Impact: when v4.7 implementation lands, gate the directional verdict
+  branches on `sessions_since >= 3` AND new `MIN_DAYS_FOR_VERDICT = 2`.
+  Option A revisit trigger documented: 30 days of `baseline_readings` data
+  + at least one real-world spike-baselined fix in production.
+- **`_serve_json` is now the single point that emits `Cache-Control` for
+  JSON responses.** The two existing explicit overrides (`server.py:320`
+  favicon max-age=86400, `:721` SSE no-cache) are on non-JSON paths and do
+  not collide.
+  Why: prevents future `/api/*` endpoints from inheriting whatever cache
+  policy the browser/proxy guesses.
+- **`BURNCTL_PROJECT_ROOTS` env var is the explicit override path for
+  project CLAUDE.md discovery; defaults are
+  `~/projects ~/code ~/dev ~/src ~/work`.** Users who want to exclude
+  backups (e.g. `Tidify12-backup-2026-03-24`) can pin the explicit list.
+  Why: literal interpretation of the v4.5.0 PRD walked the wrong path.
+  Defaulting to common parents fixes the silent zero-finding without
+  forcing users to configure.
+- **Stash-drop decision rule:** if a stash file list is `CHANGELOG.md` ONLY
+  and the underlying work is already in the repo, drop after inspection.
+  Why: a stash that survives 10+ commits is operational noise.
+
+### Known Issues / Not Done
+- **`git push origin main` not run.** Local `main` is 8 commits + merge
+  ahead of `origin/main`.
+  Why deferred: per Guardian Pipeline, push to shared remote needs human
+  go-ahead.
+- **`git tag -a v4.5.3` + tag push not run.** Same reason.
+- **`npm publish` not run.** Same reason; daily_qa shows the expected
+  pre-deploy `api/health=4.5.1, package.json=4.5.3` mismatch DOD which
+  clears after `bash deploy.sh`.
+- **`pm2 restart burnctl` not run.** Live `/api/health` still reports v4.5.1.
+- **Tidify12 + Tidify14 CLAUDE.md (both 2,168 tok) will fire
+  `claudemd_bloat` on the next scan.** Expected — exactly the value E-01
+  was designed to surface. Worth knowing before the user sees two new
+  insight cards.
+- **Tidify12-backup-2026-03-24 CLAUDE.md is in the baseline scan.** Pin via
+  `BURNCTL_PROJECT_ROOTS=...` to exclude.
+- **TD-09 (clean-Mac `npx burnctl@latest` audit record)** still open as a
+  pre-pitch prerequisite. No process work done this session.
+
+### Test + QA gate
+- **78/78 tests green** (59 before + 19 new). Suite runs in ~4s.
+- **daily_qa: 16/19 WOW, 2 OK, 1 DOD, no regressions.** The DOD is the
+  expected pre-deploy version mismatch. Both OK's are expected thin-data
+  states (`browser-session-health <3 sessions`;
+  `researcher-staleness 13.6 h "fresh but >12 h"`).
+- **burnctl-reviewer: APPROVE.** No critical flags; all 7 file-by-file
+  checks PASS.
