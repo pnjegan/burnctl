@@ -3215,3 +3215,59 @@ v4.5.5 hotfix-on-hotfix), plus a full-day narrative at
 - pm2 stayed on 4.5.5; template hot-reload verified live
   (`curl localhost:8080 | grep` confirmed new copy serving)
 - Working tree clean at session end
+
+## [2026-04-30] Session 46 — addendum (process notes)
+
+### Architecture Decisions
+- **TD-16 either/or semantics over merge-with-dedupe.** When titled
+  rows exist for the 3-day window, snapshot fallback does not fire;
+  there is no row-level merge across sources. Reasoning: meets the
+  TD-16 acceptance criterion ("widget never shows 0 when there is
+  actual browser session data") with zero dedupe complexity. No
+  current production case has partial coverage (all 17 titled rows
+  are >8 days stale; both accounts go straight to snapshot branch).
+  Impact: a future case where some sessions have titles and others
+  don't would render only the titled subset and hide the rest —
+  that's deferred as TD-31's neighbor work, not in TD-16.
+
+- **Pattern X (self-referential) for TD-16's Resolution line.** TD-17
+  used `(2c89738)` parenthetical hash style. TD-16's resolving commit
+  hash didn't exist when the Resolution paragraph was drafted, so
+  the entry says "Resolved by this commit (see git blame)" instead.
+  Avoids a `git commit --amend` dance. Impact: established as the
+  default for in-flight TD closes; explicit hash (`Pattern Y`) only
+  when the resolving commit already exists and is referenced from a
+  different commit (e.g. TD-15's "Resolved by `4475f44`").
+
+- **STATE 1 → STATE 2 → STATE 3 with hard stops on every commit
+  and every irreversible action.** Two features + four TD edits + a
+  release shipped without a rollback or rework. Pre-publish QA gate
+  surfaced visibly even though user's Phase C prompt didn't include
+  it. Impact: the discipline is the sustainable shape for any
+  multi-feature publish day.
+
+### Known Issues / Not Done (carried to Session 47)
+- **TD-31** — `chat_title_sync.py` referenced in 11+ places but not
+  shipped. Either build the Mac collector or excise references.
+  P3, ~30 min for the excise path.
+- **TD-32** — 5h window label clarity (rolling tokens vs Anthropic's
+  session quota). P3, copy-only.
+- **TD-33** — Sonnet-only weekly sub-quota unsurfaced on Max plan.
+  P3, ~45 min (mac-sync.py + db.py + render).
+- **F4 implementation unblocked.** TD-18 reconciliation closed
+  cleanly; design doc at `docs/f4-design.md` (commit `161b5b1`).
+  ~3-4 hr.
+- **6 deferred TDs in `.deferred-tds-2026-04-29.md`** — promote to
+  TD-19..24 next session.
+- **TD-25 (rule debounce hardcoding, P2), TD-13 Phase 2 (108 caller
+  sites), TD-14 (test isolation), `burnctl doctor`** — backlog after
+  F4.
+
+### Session metrics
+- 5 commits shipped (`1d139de` → `d85c412`), all pushed.
+- 4 TDs closed (TD-15, TD-16, TD-18, TD-29). 3 TDs filed (TD-31,
+  TD-32, TD-33).
+- v4.5.6 published to npm @latest. pm2 live on 4.5.6.
+- 80/80 unit tests pass. QA gate 18 WOW · 2 OK · 0 DOD (both OKs
+  expected thin-data).
+- Working tree clean at session end.
