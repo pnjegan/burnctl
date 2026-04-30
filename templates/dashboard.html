@@ -1139,6 +1139,17 @@ function authHeaders() {
       const hasSessions = (acct.sessions_count || 0) > 0;
       const hasBrowser = ba && ba.status === 'active' && ba.snapshot;
 
+      let overageBar = '';
+      if (ba && ba.snapshot && ba.snapshot.extra_credits_limit > 0) {
+        // Anthropic returns extra_credits in cents (e.g. 2136 = $21.36).
+        const oUsed = ba.snapshot.extra_credits_used || 0;
+        const oLim = ba.snapshot.extra_credits_limit;
+        const oPct = (oUsed / oLim) * 100;
+        overageBar =
+          '<div class="bar-label" style="margin-top:10px">claude.ai overage — $' + (oUsed / 100).toFixed(2) + ' / $' + (oLim / 100).toFixed(2) + ' (' + fmtPct(oPct) + ')</div>' +
+          '<div class="bar-track"><div class="bar-fill ' + windowClass(oPct) + '" style="width:' + Math.min(oPct, 100) + '%"></div></div>';
+      }
+
       if (!w && !hasBrowser) return '';
 
       // Browser-only account (no JSONL sessions, has browser tracking)
@@ -1154,6 +1165,7 @@ function authHeaders() {
             '<div class="bar-track"><div class="bar-fill ' + windowClass(five) + '" style="width:' + Math.min(five, 100) + '%"></div></div>' +
             '<div class="bar-label" style="margin-top:10px">7-day window — ' + fmtPct(seven) + '</div>' +
             '<div class="bar-track"><div class="bar-fill ' + windowClass(seven) + '" style="width:' + Math.min(seven, 100) + '%"></div></div>' +
+            overageBar +
             '<div class="window-stats"><span class="val" style="color:var(--text-tertiary)">Browser sessions tracked above; CLI sessions track separately when active</span></div>' +
           '</div>'
         );
@@ -1181,7 +1193,7 @@ function authHeaders() {
           '<div class="bar-track"><div class="bar-fill ' + windowClass(bSeven) + '" style="width:' + Math.min(bSeven, 100) + '%"></div></div>' : '');
       }
 
-      if (lim === 0 && !browserBar && total === 0) return '';
+      if (lim === 0 && !browserBar && !overageBar && total === 0) return '';
 
       return (
         '<div class="window-panel">' +
@@ -1197,6 +1209,7 @@ function authHeaders() {
             '<span><span class="val">' + fmtNum(total) + '</span> / ' + fmtNum(lim) + '</span>' +
           '</div>' : '') +
           browserBar +
+          overageBar +
         '</div>'
       );
     });
