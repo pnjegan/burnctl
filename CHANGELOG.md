@@ -2971,3 +2971,150 @@ v4.5.5 hotfix-on-hotfix), plus a full-day narrative at
 ### Known Issues / Not Done
 - Mac smoke re-test on v4.5.5 — to be run by user from a fresh
   Mac terminal
+
+## [2026-04-30] Session 45 — Morning batch: TD investigations, browser copy fix, dual handoff
+
+### Fixed
+- `templates/dashboard.html:1157` — reworded misleading Pro panel
+  copy from "No Claude Code sessions — browser tracking only" →
+  "Browser sessions tracked above; CLI sessions track separately
+  when active". Reads as factual now, not as "tracking is broken".
+  Why: Users seeing working 5h/7d window data immediately above
+  the line interpreted the negative phrasing as a tooling failure.
+  Files: `templates/dashboard.html`
+  Commit: `4475f44`
+
+### Added
+- **8 new TDs filed** (TD-15..18, TD-25..28; slots TD-19..24
+  reserved for deferred-scratchpad promotion):
+  - TD-15 Pro panel copy reword (resolved same session by `4475f44`)
+  - TD-16 Recent Browser Sessions widget gates on titles, not data
+  - TD-17 Insights upsert key (later closed as misdiagnosed —
+    see Decisions)
+  - TD-18 Anthropic settings reconciliation (Pro matches, Max
+    pending)
+  - TD-25 Rule debounce windows hardcoded across 26 call sites
+    (P2, rule-1 violation)
+  - TD-26 Dashboard renders related observations as N separate
+    cards (P3, F4-adjacent)
+  - TD-27 Account labels user-supplied, no auto-derivation from
+    Anthropic org metadata (P3)
+  - TD-28 Hero card "Browser-only account" headline reads as
+    negative status (P3)
+  Files: `TECH_DEBT.md`
+  Commits: `934ef09`, `2c89738`, `4475f44`
+
+- **Deferred-TD scratchpad** parking 6 items from yesterday's
+  smoke test until tomorrow's promotion to TD-19..24 (WoW +8330%,
+  TOP ACTIONS dollar dup, TOP ACTIONS vs Insights labels,
+  Generate Fix button inconsistency, fix tracker recency,
+  stably-worsened fix #12).
+  Why: Yesterday's smoke surfaced 10 issues; only 4 were filed in
+  the browser batch. Scratchpad keeps the rest visible without
+  scope creep.
+  Files: `.deferred-tds-2026-04-29.md`
+  Commit: `dbf9329`
+
+- **Yesterday's full-day session log committed** (was uncommitted
+  at session start) + matching CHANGELOG Session 43 close-out
+  entry.
+  Files: `docs/sessions/2026-04-29-fullday.md` (178 lines),
+  `CHANGELOG.md` (+29)
+  Commits: `70112c0`, `76d9869`
+
+- **Two handoff documents** for resumption: tactical
+  (browser-feature track, TD-29 next) + strategic (broader
+  burnctl arc, F4 roadmap, known traps).
+  Files: `docs/sessions/2026-04-30-browser-features.md`,
+  `docs/sessions/2026-04-30-handoff.md`
+  Commit: `eb4ca4e`
+
+### Verified read-only (no code shipped)
+- **A-06 ranking** working as designed: `daily_report.py:_recommendations_section`
+  alias chain catches all 6 dollar-bearing keys; `/api/daily`
+  returns strictly descending dollar order live.
+- **F2/F3 stability**: `compute_delta(conn, 12)` and
+  `compute_delta(conn, 14)` produce byte-for-byte identical
+  3-tuples across paired calls. CORR-10/11 audit findings closed
+  by `e503c59` (point-in-time anchors via
+  `since_override=fix["created_at"]`).
+- **Insight dedup**: already two-layer (write-side
+  `_insight_exists_recent` 12h default + per-rule overrides;
+  read-side `get_insights` collapses on
+  `(insight_type, project, message)`). The "messy report"
+  perception was a misdiagnosis.
+- **TD-18 partial reconcile**: Pro 7d window 8% matches Anthropic
+  settings exactly. extra_credits_used/limit captured in DB
+  ($21.36 / $50) but never rendered. Max account 5h/7d not yet
+  visually compared.
+
+### Architecture Decisions
+- **TD-17 closed as misdiagnosed**, not fixed. The original
+  "missing upsert key" framing was wrong — STATE 1 read of
+  `db.py:1440` revealed deliberate
+  `(insight_type, project, message)` dedup with documented
+  intent ("window_risk snapshots that differ only by numeric
+  text survive as distinct cards"). A schema UNIQUE on
+  hash(message) wouldn't collapse drifting-message rows; a
+  `(type, project)`-only collapse would hide intentional
+  observations. No code shipped; replaced with TD-25 and TD-26.
+  Why: Read-before-draft (rule 5) caught a fix that would have
+  layered broken dedup on top of working dedup.
+  Impact: Established that data-layer concerns must be confirmed
+  against actual code, not inferred from screenshots/symptoms.
+  Commit: `2c89738`
+
+- **5 standing rules established** for all future burnctl
+  prompts: no hardcoding / no manual steps / CLI uses JSONL /
+  browser uses Anthropic API / read-before-draft. Saved as
+  feedback memory for cross-session persistence.
+  Why: Three near-misses this session (TD-17 misdiagnosis,
+  label-provenance over-strictness on mac-sync.py, hardcoded
+  `LIMIT 50` in proposed fix) showed that without explicit
+  rules, drift toward symptom-fixing rather than root-cause
+  investigation is easy.
+  Impact: Every future prompt opens with rule scan; STOP-and-flag
+  if any step would violate them.
+  Files: `~/.claude/projects/-root-projects-burnctl/memory/feedback_burnctl_standing_rules.md`
+
+- **TD numbering reserves TD-19..24 for deferred batch**, new
+  TDs start at TD-25. Two-handoff convention (browser-features +
+  dev-arc) for parallel resumption tracks.
+  Why: Linear numbering would lose the deferred-scratchpad
+  promotion semantics.
+
+- **STATE 1 → STATE 2 → STATE 3 discipline with ASK gates**
+  produced 7 clean commits, zero rollbacks, zero rework across
+  the session. No bundling. One commit per logical change.
+
+### Known Issues / Not Done (carry to Session 46)
+- **TD-29 (metered overage rendering)** — the actual headline
+  browser feature. Data is captured in DB
+  (`claude_ai_snapshots.extra_credits_used/limit`); `/api/accounts`
+  doesn't expose it; dashboard never renders it. Estimated
+  1.5-2 hr.
+- **TD-16 (Recent Browser Sessions widget)** — gates on
+  chat-title presence rather than session-data presence. Real
+  data invisible until `chat_title_sync.py` runs. ~45 min.
+- **TD-18 close + v4.5.6 publish** — needs Max account
+  Anthropic-settings eyeball (15 min user inspection) plus
+  version bump + CHANGELOG + smoke + npm publish + tag.
+- **6 deferred TDs in `.deferred-tds-2026-04-29.md`** — promote
+  to TD-19..24 next session.
+- **TD-15 status flip** — copy is shipped (commit `4475f44`) but
+  TD-15's Status: line still reads "open"; needs flip to
+  "resolved" with Resolution line referencing `4475f44`.
+- **F4 implementation** unblocks once TD-18 closes cleanly
+  (~3-4 hr; design doc at `docs/f4-design.md`, commit `161b5b1`).
+- **`burnctl doctor` subcommand**, **TD-13 Phase 2** (108 caller
+  sites), **TD-14** test isolation — backlog after F4.
+
+### Session metrics
+- 7 commits (`70112c0` → `eb4ca4e`), all pushed to `origin/main`
+- 7 files touched: 1 code (template, 1 line), 1 CHANGELOG, 1
+  TECH_DEBT, 4 new docs
+- Net: +708 / -1 lines
+- npm @latest stayed at 4.5.5 (no publish this session)
+- pm2 stayed on 4.5.5; template hot-reload verified live
+  (`curl localhost:8080 | grep` confirmed new copy serving)
+- Working tree clean at session end
