@@ -1216,8 +1216,10 @@ function authHeaders() {
     $('windows-section').innerHTML = blocks.join('');
   }
 
-  // v4.4.0 — self-fetching card for chat titles pushed by chat_title_sync.py.
-  // Row colour-coding: >120min red, >60min yellow, <=60min green. IST display.
+  // Self-fetching card for browser activity. Prefers titled chat rows
+  // (browser_chat_sessions); falls back to snapshot-derived sessions
+  // when titles are absent. Row colour-coding: >120min red, >60min
+  // yellow, <=60min green. IST display.
   function renderBrowserChats() {
     fetch('/api/browser-chats-recent')
       .then(function(r) { return r.json(); })
@@ -1227,9 +1229,7 @@ function authHeaders() {
         if (!chats.length) {
           $('bchat-body').innerHTML =
             '<div class="empty" style="padding:18px;color:var(--text-tertiary);font-family:var(--mono);font-size:13px">' +
-              'No chat titles yet &mdash; run ' +
-              '<code style="background:var(--bg-tertiary,#f3f4f6);padding:2px 6px;border-radius:3px">chat_title_sync.py</code>' +
-              ' on your Mac.' +
+              'No browser activity in the last 3 days.' +
             '</div>';
           return;
         }
@@ -1269,15 +1269,20 @@ function authHeaders() {
           var dur = min >= 60
             ? (Math.floor(min / 60) + 'h ' + String(min % 60).padStart(2, '0') + 'm')
             : (min + 'min');
+          var titleCell;
+          if (c.source === 'snapshot') {
+            titleCell = '<em style="color:var(--text-tertiary)">browser session</em>';
+          } else {
+            titleCell = esc(c.title || '') +
+              ' <span style="color:var(--text-tertiary);font-size:11px">(' + esc(c.browser || '') + ')</span>';
+          }
           return (
             '<tr style="' + bg + '">' +
               '<td style="font-family:var(--mono);font-size:12px">' + ts + '</td>' +
               '<td><span class="account-tag">' + esc(c.account) + '</span></td>' +
               '<td style="font-family:var(--mono)">' + dur + '</td>' +
               '<td>' + flag + ' <span style="color:var(--text-tertiary);font-size:11px">' + flagText + '</span></td>' +
-              '<td>' + esc(c.title || '') +
-                ' <span style="color:var(--text-tertiary);font-size:11px">(' + esc(c.browser || '') + ')</span>' +
-              '</td>' +
+              '<td>' + titleCell + '</td>' +
             '</tr>'
           );
         }).join('');

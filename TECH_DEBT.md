@@ -287,16 +287,16 @@ Last consolidated: 2026-04-24 (v4.5.3 gap-closure session).
 - **Added:** dashboard smoke 2026-04-29.
 
 ### TD-16 — "Recent Browser Sessions" widget gates on chat titles, not data
-- **Status:** open
+- **Status:** resolved (2026-04-30)
 - **Priority:** P2 (data invisibility — real sessions read as zero)
-- **Files:** dashboard "Recent Browser Sessions" widget rendering;
-  `chat_title_sync.py`; `claude_ai_tracker.py`
-- **Context:** Widget shows `0` with red counter when
-  `chat_title_sync.py` hasn't been run, even when underlying
-  browser session data exists in `claude_ai_snapshots`. The
-  empty-state is gated on chat-title presence rather than on
-  session-data presence — real data is invisible until a separate
-  sync step runs. User reported "I have three sessions opened" 
+- **Files:** `server.py` (`/api/browser-chats-recent` handler),
+  `templates/dashboard.html` (`renderBrowserChats`)
+- **Context:** Widget showed `0` with red counter when
+  `chat_title_sync.py` hadn't been run, even when underlying
+  browser session data existed in `claude_ai_snapshots`. The
+  empty-state was gated on chat-title presence rather than on
+  session-data presence — real data was invisible until a separate
+  sync step ran. User reported "I have three sessions opened"
   when widget showed 0.
 - **Fix:** show session counts and IDs even when titles are
   missing, OR change the empty-state copy to explicitly say
@@ -306,6 +306,16 @@ Last consolidated: 2026-04-24 (v4.5.3 gap-closure session).
   actual browser session data in the DB. A `0` reading means
   "no session data," not "no titles."
 - **Added:** dashboard smoke 2026-04-29.
+- **Resolution:** Backend `/api/browser-chats-recent` now falls
+  back to `browser_sessions.detect_browser_sessions` when titled
+  rows are empty for the 3-day window. Each row carries a
+  `source` field (`'title'` | `'snapshot'`); snapshot-derived rows
+  render with an italic "browser session" label instead of the
+  titled-row format. Empty-state copy rewritten to "No browser
+  activity in the last 3 days." — no longer references the
+  unshipped `chat_title_sync.py`. Either/or semantics (no
+  partial-coverage merge); follow-up work tracked as TD-31.
+  Resolved by this commit (see git blame).
 
 ### TD-17 — Insights table missing upsert key; duplicates accumulate per scan
 - **Status:** resolved (misdiagnosed) (2026-04-30)
@@ -520,6 +530,35 @@ Last consolidated: 2026-04-24 (v4.5.3 gap-closure session).
   sees usable window data in the hero card, not a "this
   account is missing CLI" stub.
 - **Added:** TD-15 fix 2026-04-30.
+
+### TD-31 — `chat_title_sync.py` referenced but not shipped
+- **Status:** open
+- **Priority:** P3 (documentation/consistency drift, no user-facing
+  failure now that TD-16 is resolved)
+- **Files:** `chat_title_sync.py` (does not exist); referenced from
+  `server.py:930`, `server.py:1338`, `db.py:414`, `why_limit.py:406`,
+  `why_limit.py:453`, `templates/dashboard.html:1219` (header
+  comment), `TECH_DEBT.md` (this entry + TD-16 historical context),
+  `CHANGELOG.md` (multiple entries), and `README.md` (none yet —
+  but missing where it should be).
+- **Context:** A Mac-side collector named `chat_title_sync.py` is
+  referenced in 11+ places across the codebase as the populator of
+  `browser_chat_sessions`. The script has never been committed to
+  the repo. Until TD-16, the dashboard empty-state instructed users
+  to run a script they had no way to obtain. TD-16 removed the
+  user-facing reference; the in-code references remain.
+- **Fix (pick one):**
+  (a) Build and ship the Mac collector — Chrome/Vivaldi history.sqlite
+      reader that POSTs to `/api/browser-chats`. The endpoint
+      contract is already implemented at `server.py:1342–1405`.
+  (b) Excise all references — drop the comments in `server.py`,
+      `db.py`, `why_limit.py`, and the dashboard template; keep
+      `/api/browser-chats` for any future implementation but stop
+      advertising a script that doesn't exist.
+- **Acceptance:** zero references in shipped code to a script that
+  doesn't exist in the repo; either the file is committed and
+  documented in README, or the references are gone.
+- **Added:** TD-16 fix 2026-04-30.
 
 ---
 

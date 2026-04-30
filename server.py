@@ -927,40 +927,76 @@ class DashboardHandler(BaseHTTPRequestHandler):
             })
 
         elif path == "/api/browser-chats-recent":
-            # v4.4.0 — chat titles from Mac-side chat_title_sync.py.
-            # Most recent 20 chats in the last 3 days across all accounts.
+            # Recent browser activity, last 3 days, max 20 rows. Prefers
+            # titled rows from browser_chat_sessions when available; falls
+            # back to snapshot-derived sessions (browser_sessions
+            # .detect_browser_sessions) when titled rows are empty for the
+            # window. Each row carries `source` ('title' | 'snapshot') so
+            # the frontend can render degraded entries appropriately.
+            cutoff = int(time.time()) - 3 * 24 * 3600
             conn = get_conn()
             try:
                 has_table = conn.execute(
                     "SELECT COUNT(*) FROM sqlite_master "
                     "WHERE type='table' AND name='browser_chat_sessions'"
                 ).fetchone()[0]
-                if not has_table:
-                    self._serve_json({"chats": [], "total": 0})
-                    return
-                cutoff = int(time.time()) - 3 * 24 * 3600
-                rows = conn.execute(
-                    "SELECT title, account, browser, first_visit, "
-                    "       duration_min, page_visits "
-                    "FROM browser_chat_sessions "
-                    "WHERE first_visit > ? "
-                    "ORDER BY first_visit DESC "
-                    "LIMIT 20",
-                    (cutoff,),
-                ).fetchall()
+                rows = []
+                if has_table:
+                    rows = conn.execute(
+                        "SELECT title, account, browser, first_visit, "
+                        "       duration_min, page_visits "
+                        "FROM browser_chat_sessions "
+                        "WHERE first_visit > ? "
+                        "ORDER BY first_visit DESC "
+                        "LIMIT 20",
+                        (cutoff,),
+                    ).fetchall()
+
+                if rows:
+                    chats = [
+                        {
+                            "title": r["title"],
+                            "account": r["account"],
+                            "browser": r["browser"],
+                            "first_visit": r["first_visit"],
+                            "duration_min": r["duration_min"],
+                            "page_visits": r["page_visits"],
+                            "source": "title",
+                        }
+                        for r in rows
+                    ]
+                else:
+                    from browser_sessions import detect_browser_sessions
+                    account_rows = conn.execute(
+                        "SELECT DISTINCT account_id FROM claude_ai_snapshots "
+                        "WHERE polled_at >= ?",
+                        (cutoff,),
+                    ).fetchall()
+                    chats = []
+                    for ar in account_rows:
+                        aid = ar["account_id"]
+                        try:
+                            sessions = detect_browser_sessions(aid, days=3)
+                        except Exception as _e:
+                            print(
+                                f"[api] detect_browser_sessions({aid}) failed: {_e}",
+                                file=sys.stderr,
+                            )
+                            continue
+                        for s in sessions:
+                            chats.append({
+                                "title": "",
+                                "account": aid,
+                                "browser": "",
+                                "first_visit": s["start_time"],
+                                "duration_min": s["duration_min"],
+                                "page_visits": None,
+                                "source": "snapshot",
+                            })
+                    chats.sort(key=lambda c: c["first_visit"], reverse=True)
+                    chats = chats[:20]
             finally:
                 conn.close()
-            chats = [
-                {
-                    "title": r["title"],
-                    "account": r["account"],
-                    "browser": r["browser"],
-                    "first_visit": r["first_visit"],
-                    "duration_min": r["duration_min"],
-                    "page_visits": r["page_visits"],
-                }
-                for r in rows
-            ]
             self._serve_json({"chats": chats, "total": len(chats)})
 
         elif path == "/api/context-rot":
