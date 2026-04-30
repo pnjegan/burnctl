@@ -378,7 +378,7 @@ Last consolidated: 2026-04-24 (v4.5.3 gap-closure session).
     the real "messy report" fix.
 
 ### TD-18 — Reconcile burnctl windows + costs against Anthropic settings (verification gate)
-- **Status:** open
+- **Status:** resolved (2026-04-30)
 - **Priority:** P1 (verification gate before F4 measurement work)
 - **Files:** `mac-sync.py` (window definitions), server-side
   `claude_ai_tracker.py` poll path, `cli.py` account labelling,
@@ -419,6 +419,19 @@ Last consolidated: 2026-04-24 (v4.5.3 gap-closure session).
   F4 around the finding.
 - **Added:** Anthropic settings comparison 2026-04-29 ~14:00 IST. 
   NOT a confirmed bug — a verification gate.
+- **Resolution:** Reconciliation completed against Anthropic's
+  claude.ai/settings/usage for both Pro and Max accounts. Pro
+  weekly matches exactly (8% / 8.0%). Max weekly within 1pp
+  polling-time tolerance (11% Anthropic / 10.0% burnctl). Max
+  "Current session" (41%) does not align with burnctl's 5h window
+  (34.0%) because the metrics are defined differently — Anthropic
+  measures time-since-first-message session quota, burnctl
+  measures a rolling 5-hour token window. This is a label clarity
+  issue, not a math bug; filed as TD-32. Anthropic's Max settings
+  also expose a "Sonnet only" weekly sub-quota burnctl doesn't
+  currently track; filed as TD-33. Overage is server-computed by
+  Anthropic and read directly by burnctl, so it self-reconciles.
+  F4 work unblocked — no measurement gap requires re-scoping.
 
 ### TD-25 — Rule debounce windows hardcoded across 26 call sites
 - **Status:** open
@@ -559,6 +572,43 @@ Last consolidated: 2026-04-24 (v4.5.3 gap-closure session).
   doesn't exist in the repo; either the file is committed and
   documented in README, or the references are gone.
 - **Added:** TD-16 fix 2026-04-30.
+
+### TD-32 — 5h window label clarity (rolling tokens vs session quota)
+- **Status:** open
+- **Priority:** P3
+- **Files:** `templates/dashboard.html` (window-panel render)
+- **Context:** burnctl labels the rolling 5-hour token window as
+  "5h window" / "5-hour window". Anthropic's settings page shows
+  a different metric called "Current session" that measures
+  time-since-first-message session quota. Users who compare the
+  two will see different numbers and think burnctl is wrong —
+  surfaced during TD-18 reconciliation 2026-04-30.
+- **Fix:** Annotate the burnctl label to disambiguate. Options:
+  "5h tokens", "5h rolling window", or "5-hour window (tokens)".
+  Pick whichever reads cleanest; copy-only change.
+- **Acceptance:** Label distinguishes burnctl's rolling token
+  window from Anthropic's session quota; reasonable user does
+  not expect numeric parity between the two.
+- **Added:** TD-18 reconciliation 2026-04-30.
+
+### TD-33 — Sonnet-only weekly sub-quota unsurfaced (Max plan)
+- **Status:** open
+- **Priority:** P3
+- **Files:** `tools/mac-sync.py` (poll), `db.py` (schema),
+  `server.py` (endpoint), `templates/dashboard.html` (render)
+- **Context:** Anthropic's Max plan settings page exposes a
+  "Sonnet only" weekly sub-quota separate from "All models".
+  burnctl polls and renders only the All-models weekly. Max users
+  have an additional bucket they cannot see in burnctl — surfaced
+  during TD-18 reconciliation 2026-04-30.
+- **Fix:** Extend mac-sync.py to capture the Sonnet-only bucket
+  from Anthropic's API response, persist alongside existing
+  weekly fields, render as an additional bar on Max account
+  panels (gated on `plan === 'max'`).
+- **Acceptance:** Max account panel shows both All-models and
+  Sonnet-only weekly bars with reconciling values vs Anthropic's
+  settings page.
+- **Added:** TD-18 reconciliation 2026-04-30.
 
 ---
 
