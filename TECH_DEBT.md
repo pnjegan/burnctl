@@ -308,8 +308,8 @@ Last consolidated: 2026-04-24 (v4.5.3 gap-closure session).
 - **Added:** dashboard smoke 2026-04-29.
 
 ### TD-17 — Insights table missing upsert key; duplicates accumulate per scan
-- **Status:** open
-- **Priority:** P2 (highest-ROI UX fix; "messy report" perception)
+- **Status:** resolved (misdiagnosed) (2026-04-30)
+- **Priority:** P2 (original framing — see Resolution)
 - **Files:** `insights.py` (`insert_insight` call sites — every
   rule), `db.py` (`insights` table schema), migration if a UNIQUE
   constraint is added retroactively
@@ -338,6 +338,34 @@ Last consolidated: 2026-04-24 (v4.5.3 gap-closure session).
   Dashboard insight count reflects unique findings, not
   scan-event count.
 - **Added:** dashboard smoke 2026-04-29.
+- **Resolution (2026-04-30):** Investigation showed the framing
+  was wrong. Two existing dedup layers handle this correctly:
+  - **Write-side**: `_insight_exists_recent` (insights.py:46,
+    12h default window with per-rule overrides 6h/24h/48h/168h)
+    skips re-emit while a finding is fresh.
+  - **Read-side**: `get_insights` (db.py:1451) collapses on key
+    `(insight_type, project, message)` — `message` deliberately
+    included so window_risk snapshots that differ only by
+    numeric text ("48%" vs "39%") survive as distinct cards.
+
+  Both work as designed. Duplicates exist because: 12h debounce
+  + multi-day TTL retention + intentionally-drifting metric
+  values (Tidify model_waste: 265 → 533 → 551 tokens across
+  13 days, $3266 → $4170 → $4273 projected savings) means each
+  message-distinct row is preserved on purpose — the system is
+  surfacing real metric change, not duplicating findings.
+
+  Original proposed fix (UNIQUE on `(insight_type, project,
+  hash(message))`) would not collapse drifting-message rows;
+  proposed `(insight_type, project)`-only collapse at the read
+  path would hide intentional observations.
+
+  No code shipped. Two follow-up TDs filed:
+  - **TD-25** — rule debounce windows hardcoded across 26 call
+    sites (rule 1 violation: config-as-data).
+  - **TD-26** — dashboard renders related observations as N
+    separate cards; group-by-(type,project) at render layer is
+    the real "messy report" fix.
 
 ### TD-18 — Reconcile burnctl windows + costs against Anthropic settings (verification gate)
 - **Status:** open
@@ -381,6 +409,62 @@ Last consolidated: 2026-04-24 (v4.5.3 gap-closure session).
   F4 around the finding.
 - **Added:** Anthropic settings comparison 2026-04-29 ~14:00 IST. 
   NOT a confirmed bug — a verification gate.
+
+### TD-25 — Rule debounce windows hardcoded across 26 call sites
+- **Status:** open
+- **Priority:** P2 (rule 1 violation — config-as-data principle)
+- **Files:** `insights.py` (~26 call sites with hardcoded
+  `hours=N` values), `insights.py:46`
+  (`_insight_exists_recent` default)
+- **Context:** Each rule passes a debounce window inline to
+  `_insight_exists_recent(conn, type, project, hours=N)`.
+  Current spread: 6h (2 budget rules), 12h (default — 15
+  rules), 24h (5 rules), 48h (2 rules), 168h (3 rules).
+  Tuning dashboard noise level (e.g., "model_waste once a
+  week, window_risk every hour") requires a code edit across
+  26 lines instead of a config flip. Violates standing rule 1
+  (no hardcoding for values that change semantically over
+  time). Surfaced during TD-17 investigation 2026-04-30.
+- **Fix:** Move per-rule windows to config — a dict in
+  `config.py` keyed by `insight_type`, with 12h default
+  fallback. Adjust `_insight_exists_recent` to look up the
+  window from config when `hours` is not passed explicitly.
+  Backward-compatible: existing inline `hours=` overrides
+  still work; remove them in a follow-up cleanup.
+- **Acceptance:** A user can change any rule's debounce window
+  by editing one config value with no code edit. The 26 inline
+  `hours=` overrides are either removed or documented as
+  legacy.
+- **Added:** TD-17 investigation 2026-04-30.
+
+### TD-26 — Dashboard renders related observations as N separate cards
+- **Status:** open
+- **Priority:** P3 (F4-adjacent — surface noise reduction)
+- **Files:** dashboard insights renderer
+  (`templates/dashboard.html` or the JS that lays out insight
+  cards), possibly `/api/insights` response shape if grouping
+  is server-side
+- **Context:** When the same `(insight_type, project)` emits
+  multiple observations over time with drifting metrics
+  (model_waste: 265 → 533 → 551 tokens; window_risk: 39% →
+  48% → 60% throughout a day), the dashboard renders each as
+  an independent card. Visually reads as "messy report" /
+  duplicate findings to users, even though each card is
+  intentionally distinct (TD-17 investigation confirmed the
+  data layer is correct). 16 of the current ~50 visible cards
+  are members of multi-observation groups.
+- **Fix:** Group-by-`(insight_type, project)` at the dashboard
+  render layer. Show one card per group with the most-recent
+  observation prominent and N older observations stacked /
+  collapsible. Server-side `get_insights` stays unchanged
+  (preserves the documented design that message-distinct rows
+  are kept queryable).
+- **Acceptance:** Dashboard shows one card per active finding
+  with timeline drill-in. Visible card count drops from ~50
+  (LIMIT 50 with message-distinct dedup) to ~16-20 unique
+  findings. Grouped cards show latest values prominently with
+  expand-for-history.
+- **Added:** TD-17 investigation 2026-04-30.
 
 ---
 
