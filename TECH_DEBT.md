@@ -263,6 +263,125 @@ Last consolidated: 2026-04-24 (v4.5.3 gap-closure session).
   environment leaves no files in `~/.burnctl/`.
 - **Added:** v4.5.5 hotfix validation 2026-04-29.
 
+### TD-15 — Pro account panel reads as "tracking broken" not "CLI not used"
+- **Status:** open
+- **Priority:** P2 (UX clarity for new Pro users)
+- **Files:** dashboard account-panel renderer (`templates/dashboard.html`
+  or whichever JS/template emits the per-account section)
+- **Context:** Pro account panel shows
+  `"No Claude Code sessions — browser tracking only"` while the
+  immediately preceding rows show browser tracking IS working
+  (5h window 8.0%, 7d window 8.0%). A user reading cold can
+  interpret the bottom message as "tracking is broken" rather
+  than "this account type has no CLI usage, only browser
+  sessions."
+- **Fix:** reword. Candidates:
+  1. `"Browser-only account — no CLI sessions on this plan"`
+  2. `"Pro plan: browser sessions tracked above; no CLI sessions
+     on this account"`
+  3. Remove the "No Claude Code sessions" line entirely when
+     browser data is present in the same panel.
+- **Acceptance:** a Pro user reading the panel cold can tell
+  that tracking is working and that the absence of CLI sessions
+  is a plan property, not a tooling failure.
+- **Added:** dashboard smoke 2026-04-29.
+
+### TD-16 — "Recent Browser Sessions" widget gates on chat titles, not data
+- **Status:** open
+- **Priority:** P2 (data invisibility — real sessions read as zero)
+- **Files:** dashboard "Recent Browser Sessions" widget rendering;
+  `chat_title_sync.py`; `claude_ai_tracker.py`
+- **Context:** Widget shows `0` with red counter when
+  `chat_title_sync.py` hasn't been run, even when underlying
+  browser session data exists in `claude_ai_snapshots`. The
+  empty-state is gated on chat-title presence rather than on
+  session-data presence — real data is invisible until a separate
+  sync step runs. User reported "I have three sessions opened" 
+  when widget showed 0.
+- **Fix:** show session counts and IDs even when titles are
+  missing, OR change the empty-state copy to explicitly say
+  `"no chat titles synced — run chat_title_sync.py"` instead of
+  a bare `0`.
+- **Acceptance:** the widget never shows `0` when there is
+  actual browser session data in the DB. A `0` reading means
+  "no session data," not "no titles."
+- **Added:** dashboard smoke 2026-04-29.
+
+### TD-17 — Insights table missing upsert key; duplicates accumulate per scan
+- **Status:** open
+- **Priority:** P2 (highest-ROI UX fix; "messy report" perception)
+- **Files:** `insights.py` (`insert_insight` call sites — every
+  rule), `db.py` (`insights` table schema), migration if a UNIQUE
+  constraint is added retroactively
+- **Context:** Each scan inserts new insight rows instead of
+  upserting on `(insight_type, target, content_hash)`. Example
+  observed today: `"Tidify uses Opus but avg response is 533 
+  tokens — Sonnet saves ~$4170.91/mo"` at 01:34 PM and 
+  `"... avg response is 520 tokens — Sonnet saves ~$4075.31/mo"` 
+  at 01:31 AM (~12 hours apart). Same rule, same project, slightly 
+  drifting numbers, two rows. Result: dashboard shows ~45 insights 
+  when ~15-20 unique findings exist. Affects browser-derived 
+  insights (cost spikes, sub-agent unbounded scope) and CLI-derived 
+  insights equally. Likely the highest-ROI quality fix — kills the 
+  "messy report" perception.
+- **Fix:** add an upsert key. Options:
+  1. UNIQUE constraint on `(insight_type, target, hash(message))`
+     plus `INSERT OR REPLACE` in `insert_insight`.
+  2. Application-level dedup: before insert, check for an
+     existing row matching `(insight_type, project)` within the
+     last N hours and update in place.
+  3. Periodic dedup pass at end of scan (lower-effort, less
+     correct under concurrent scanners).
+  Option 1 is preferred — single source of truth at the DB level.
+- **Acceptance:** running two consecutive scans on the same data
+  does not increase the insight count for unchanged findings.
+  Dashboard insight count reflects unique findings, not
+  scan-event count.
+- **Added:** dashboard smoke 2026-04-29.
+
+### TD-18 — Reconcile burnctl windows + costs against Anthropic settings (verification gate)
+- **Status:** open
+- **Priority:** P1 (verification gate before F4 measurement work)
+- **Files:** `mac-sync.py` (window definitions), server-side
+  `claude_ai_tracker.py` poll path, `cli.py` account labelling,
+  dashboard account-panel renderer
+- **Context:** 2026-04-29 ~14:00 IST smoke test compared burnctl
+  dashboard account panels against Anthropic settings page in
+  user's browser. Findings:
+  - Pro account 7d window: burnctl 8.0% / Anthropic
+    "Weekly all models 8%" — **MATCHES**.
+  - Pro account metered overage: Anthropic shows
+    `"$21.36 of $50 extra usage (43%)"`. burnctl does NOT
+    surface this anywhere on the Pro panel — **GAP**.
+  - Max account 5h browser 80% / 7d browser 40%: Anthropic
+    settings NOT YET COMPARED for Max — needed.
+  - Account labelling: burnctl labels accounts "Personal (Max)"
+    and "Personal (Pro)" but the Pro account is actually
+    Confluent-managed (Anthropic shows
+    `"Claude is only approved for use via your Confluent id"`).
+    User confirmed pnjegan = work account. Labels in burnctl 
+    therefore mislabel the work account as personal.
+  Filed as P1 verification gate before F4 because F4 builds on
+  the measurement layer. If burnctl's window calculations don't
+  match Anthropic's truth, downstream measurement work builds on 
+  suspect ground.
+- **Fix:** tomorrow morning before F4 (~15 min):
+  1. Compare Max account Anthropic settings against burnctl panel.
+  2. Read the 5h/7d window definitions in `mac-sync.py` and the
+     server-side claude_ai poll path; compare units (rolling vs
+     calendar, all-models vs Opus-only, weekly reset boundary).
+  3. Verify account label source — should differentiate Confluent-
+     managed from personal accounts.
+  4. Decide: file precise sub-TDs with reproduction, OR close
+     this as "checked, definitions differ as documented, no
+     bug" with the explanation surfaced in panel labels.
+- **Acceptance:** F4 work proceeds once one of these holds. If 
+  reconciliation completes cleanly, no further action; F4 starts 
+  as planned. If a gap is found, file precise sub-TDs and re-scope 
+  F4 around the finding.
+- **Added:** Anthropic settings comparison 2026-04-29 ~14:00 IST. 
+  NOT a confirmed bug — a verification gate.
+
 ---
 
 ## Resolved in v4.5.3 (this session)
