@@ -1,5 +1,102 @@
 # burnctl — Changelog (continued from claudash v3.x)
 
+## [2026-04-30] Session 46 — v4.5.6 — metered overage + snapshot-fallback browser activity
+
+### Highlights
+- Two dashboard features that surface data already collected but
+  never rendered. No backend polling changes, no schema changes,
+  no `mac-sync.py` changes — pure rendering of existing fields.
+- Three TD closes (TD-15 reword shipped 2026-04-30 morning,
+  TD-16 fallback this release, TD-18 reconciliation closed).
+- Three new TDs filed (TD-31, TD-32, TD-33) from TD-16 / TD-18
+  follow-ups.
+
+### Added
+- **Metered overage on account panels (`541c3c0`, closes TD-29).**
+  Anthropic's claude.ai shows metered overage usage on the
+  settings page when an account has `extra_usage` enabled. Data
+  was already polled (`extra_credits_used`, `extra_credits_limit`
+  in `claude_ai_snapshots`) and already in the `/api/data` payload
+  (`claude_ai_browser[aid].snapshot`) but never rendered. Added
+  an `overageBar` row to `renderWindows()` in
+  `templates/dashboard.html` alongside the existing 5h/7d window
+  indicators. Renders only when `extra_credits_limit > 0`. Bar
+  width clamps at 100% on overshoot; label always shows true
+  dollars and true percent. Anthropic returns values in cents
+  (`used_credits=2136.0` → $21.36); display divides by 100.
+  Live values on shipping accounts: work_pro $21.36/$50 (42.7%),
+  personal_max $68.94/$69 (99.9%, red bar at saturation).
+  Pure frontend change.
+  Files: `templates/dashboard.html`.
+
+- **Browser activity widget no longer requires a missing script
+  (`fd7ec08`, closes TD-16; files TD-31).** The
+  `Recent Browser Sessions` widget previously gated entirely on
+  rows in `browser_chat_sessions`, populated by
+  `chat_title_sync.py` — a Mac-side collector referenced in 11+
+  places across the codebase but never shipped in the repo. With
+  no titles synced, the widget showed `0` and instructed users
+  to run a script that doesn't exist.
+  `/api/browser-chats-recent` now falls back to snapshot-derived
+  sessions via `browser_sessions.detect_browser_sessions` when
+  the titled-rows query returns empty for the 3-day window. Each
+  row carries a `source` field (`'title'` | `'snapshot'`) so the
+  frontend renders snapshot rows with an italic "browser session"
+  label. Empty-state copy rewritten to describe no activity
+  instead of pointing at missing tooling. Either/or semantics —
+  partial-coverage merging deferred (no current production case).
+  The unshipped-script issue tracked separately as TD-31.
+  Files: `server.py`, `templates/dashboard.html`.
+
+### TD ledger
+- **TD-15 resolved** by `4475f44` (2026-04-30 morning, Pro panel
+  copy reword). Status flipped this release.
+- **TD-16 resolved** by `fd7ec08` (this release).
+- **TD-18 resolved** by `543b6ec` — Anthropic settings
+  reconciliation. Pro weekly matches exactly (8% / 8.0%); Max
+  weekly within 1pp polling-time tolerance (11% / 10.0%). Max
+  "Current session" 41% vs burnctl 5h 34.0% is a metric-
+  definition difference (session quota vs rolling token window),
+  not a math bug. Filed TD-32 (label clarity) and TD-33
+  (Sonnet-only sub-quota) from the reconciliation. F4
+  measurement work unblocked.
+- **TD-29 resolved** by `541c3c0` (this release).
+- **TD-31 filed** — `chat_title_sync.py` referenced but not
+  shipped (P3, follow-up to TD-16).
+- **TD-32 filed** — 5h window label clarity, rolling tokens vs
+  session quota (P3, follow-up to TD-18).
+- **TD-33 filed** — Sonnet-only weekly sub-quota unsurfaced on
+  Max plan (P3, follow-up to TD-18).
+
+### Not changed (by design)
+- No schema changes — both TD-29 and TD-16 used data already in
+  `claude_ai_snapshots`.
+- No `mac-sync.py` changes — both features reuse existing
+  polling.
+- No new endpoints — `/api/data` and
+  `/api/browser-chats-recent` were extended in place.
+- No backend change for TD-29 (pure frontend).
+
+### Migration
+- None. Additive features only. Existing accounts continue to
+  render unchanged when `extra_credits_limit = 0` or when titled
+  chat rows exist for the 3-day window.
+
+### Test + QA gate
+- 80/80 unit tests pass (`python3 -m unittest discover tests`).
+- daily_qa.py: **18 WOW · 2 OK · 0 DOD** (exit 0). Both OKs are
+  expected thin-data states, not regressions:
+  - `browser-session-health`: `<3 sessions or no snapshots`
+    (work_pro has no pct-rising activity in window — exactly the
+    case the TD-16 snapshot fallback handles).
+  - `researcher-staleness`: yesterday's
+    `research-reports/2026-04-29.md` is 17.6h old (today's cron
+    runs ~23:07 IST, ~6h after this gate; pre-cron state).
+- Visual eyeball passed on both features (TD-29 overage bars
+  render with correct dollars/percent/clamp; TD-16 widget shows
+  9 snapshot-derived rows with mixed flag colors, empty-state
+  copy verified by reading served HTML).
+
 ## v4.5.0 — Intelligence Layer (2026-04-24)
 
 ### New

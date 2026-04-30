@@ -264,7 +264,7 @@ Last consolidated: 2026-04-24 (v4.5.3 gap-closure session).
 - **Added:** v4.5.5 hotfix validation 2026-04-29.
 
 ### TD-15 — Pro account panel reads as "tracking broken" not "CLI not used"
-- **Status:** open
+- **Status:** resolved (2026-04-30) by `4475f44`
 - **Priority:** P2 (UX clarity for new Pro users)
 - **Files:** dashboard account-panel renderer (`templates/dashboard.html`
   or whichever JS/template emits the per-account section)
@@ -285,8 +285,12 @@ Last consolidated: 2026-04-24 (v4.5.3 gap-closure session).
   that tracking is working and that the absence of CLI sessions
   is a plan property, not a tooling failure.
 - **Added:** dashboard smoke 2026-04-29.
-
-### TD-16 — "Recent Browser Sessions" widget gates on chat titles, not data
+- **Resolution:** Reworded the Pro-only-account stats line in
+  `templates/dashboard.html:1157` from "No Claude Code sessions
+  — browser tracking only" to "Browser sessions tracked above;
+  CLI sessions track separately when active". The new copy
+  describes the working state factually instead of framing the
+  account by absence. Shipped in `4475f44` (2026-04-30 morning).
 - **Status:** resolved (2026-04-30)
 - **Priority:** P2 (data invisibility — real sessions read as zero)
 - **Files:** `server.py` (`/api/browser-chats-recent` handler),
