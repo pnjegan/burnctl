@@ -466,6 +466,61 @@ Last consolidated: 2026-04-24 (v4.5.3 gap-closure session).
   expand-for-history.
 - **Added:** TD-17 investigation 2026-04-30.
 
+### TD-27 — Account labels are user-supplied at config time, no auto-derivation
+- **Status:** open
+- **Priority:** P3 (cosmetic, but affects work account labeling)
+- **Files:** `tools/mac-sync.py:_verify_with_claude` (~L240),
+  `claude_ai_tracker.py:fetch_org_id` (~L81), `accounts` table
+  schema, dashboard account-panel renderer
+- **Context:** `accounts.label` is purely user-supplied via
+  `/accounts` UI (cli.py:531). The Anthropic `/api/account`
+  membership response includes `organization.name` and
+  organization metadata that would let us auto-derive
+  accurate labels (e.g., "Confluent (Work, Pro)" instead of
+  "Personal (Pro)" for Confluent-managed accounts).
+  Currently discarded at `tools/mac-sync.py:240-264` — the
+  organization object is read for UUID only; name and
+  managed-by are dropped. Surfaced during TD-18 investigation
+  2026-04-30.
+- **Fix:** Capture `organization.name` (and any managed-by
+  indicator) from `/api/account` memberships in
+  `_verify_with_claude`. Add `organization_name` column to
+  `claude_ai_accounts` schema. Surface in dashboard label
+  when present, fall back to user-supplied label when not.
+  ~30 lines across 3 files plus a migration.
+- **Acceptance:** Work-managed accounts auto-display their
+  organization name; users can still override via `/accounts`
+  UI. No hardcoded "Confluent" or org-specific strings
+  anywhere in the codebase.
+- **Added:** TD-18 investigation 2026-04-30.
+
+### TD-28 — Hero card "Browser-only account" headline reads as negative status
+- **Status:** open
+- **Priority:** P3 (cosmetic, narrow trigger condition)
+- **Files:** `templates/dashboard.html:994-1001` (hero card
+  fallback for browser-only accounts when a specific account
+  is selected)
+- **Context:** When a user selects a specific account on the
+  dashboard and that account has zero CLI sessions but active
+  browser tracking, the hero card replaces the normal
+  metrics card with a stub that headlines "Browser-only
+  account". The body text ("No Claude Code sessions tracked.
+  Window usage comes from claude.ai browser.") reads as a
+  reasonable explanation, but the headline frames the
+  account by absence rather than by what it IS. A user
+  looking at their working Pro account sees the headline
+  and reads "something is missing here."
+- **Fix:** Reframe the headline to lead with what the
+  account does (e.g., "claude.ai browser tracking" or
+  "Browser sessions") rather than what it lacks. Consider
+  showing the actual 5h/7d window numbers in the hero card
+  instead of the stub — gives the user useful data instead
+  of a status message.
+- **Acceptance:** A user selecting a browser-only account
+  sees usable window data in the hero card, not a "this
+  account is missing CLI" stub.
+- **Added:** TD-15 fix 2026-04-30.
+
 ---
 
 ## Resolved in v4.5.3 (this session)
