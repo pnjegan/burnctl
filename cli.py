@@ -2291,6 +2291,10 @@ def main():
         print(HELP_TEXT.format(vps_ip=VPS_IP))
         sys.exit(0)
 
+    if sys.argv[1] in ("--version", "-v"):
+        print(VERSION)
+        sys.exit(0)
+
     cmd = sys.argv[1].lower()
 
     # Two-word commands: `fix add | generate <id> | start ... | result <id> | apply <id>`
