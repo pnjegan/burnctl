@@ -2173,7 +2173,11 @@ def cmd_daily():
     else:
         for r in recs:
             saving = r.get("saving_usd_monthly") or 0.0
-            tail = f" (~${saving:.2f}/mo)" if saving > 0 else ""
+            # Skip the dollar tail if the message already mentions a
+            # /mo figure — insights.py messages frequently embed the
+            # same number, which read as "$X/mo (~$X/mo)" in the brief.
+            already_has_money = "/mo" in (r.get("message") or "")
+            tail = f" (~${saving:.2f}/mo)" if saving > 0 and not already_has_money else ""
             print(f"      {r['rank']}. {r['message']}{tail}")
     print()
 
