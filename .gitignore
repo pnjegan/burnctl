@@ -20,6 +20,7 @@ __pycache__/
 .env
 .env.local
 *.pem
+.burnctlignore
 
 # ── OS junk ──
 .DS_Store

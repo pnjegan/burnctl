@@ -84,33 +84,42 @@ def has_traceback(output):
 
 
 _DEFAULT_LEAK_PATTERNS = (
-    "$227.99",  # known maintainer session cost
+    # Maintainer-private dollar amounts live in .burnctlignore (gitignored)
+    # so they never enter source control. Path leaks stay here — they are
+    # intrinsic to detection and not secret.
     "~/projects/burnctl",
     "/root/projects/burnctl",
 )
 
 
 def _load_leak_patterns():
-    """Load maintainer-leak substrings from .burnctlignore next to this file.
+    """Return the union of _DEFAULT_LEAK_PATTERNS and any entries in
+    .burnctlignore next to this file.
 
     File format: one substring per line, lines starting with `#` ignored.
-    Falls back to _DEFAULT_LEAK_PATTERNS when the file is absent, empty,
-    or unreadable. Making this loadable from disk lets other users of
-    burnctl add their own hostnames / project paths without forking the
-    QA script.
+    Defaults always apply; the file is additive — it lets users of burnctl
+    add their own hostnames / project paths / private dollar amounts
+    without forking the QA script. Order is defaults first, then file
+    entries (de-duplicated, original order preserved on each side).
     """
     f = REPO_DIR / ".burnctlignore"
-    if not f.exists():
-        return _DEFAULT_LEAK_PATTERNS
-    try:
-        patterns = tuple(
-            line.strip()
-            for line in f.read_text().splitlines()
-            if line.strip() and not line.strip().startswith("#")
-        )
-    except OSError:
-        return _DEFAULT_LEAK_PATTERNS
-    return patterns or _DEFAULT_LEAK_PATTERNS
+    file_patterns = ()
+    if f.exists():
+        try:
+            file_patterns = tuple(
+                line.strip()
+                for line in f.read_text().splitlines()
+                if line.strip() and not line.strip().startswith("#")
+            )
+        except OSError:
+            file_patterns = ()
+    seen = set()
+    merged = []
+    for p in _DEFAULT_LEAK_PATTERNS + file_patterns:
+        if p not in seen:
+            seen.add(p)
+            merged.append(p)
+    return tuple(merged)
 
 
 def has_maintainer_leak(output):
