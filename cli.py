@@ -187,6 +187,31 @@ def _acquire_pid_lock():
     return pf
 
 
+def _is_port_free(port):
+    """True if 127.0.0.1:port can be bound right now. Mirrors the probe
+    used in bin/burnctl.js::isPortFree — actually attempt the bind so
+    the result reflects current kernel state, not a stale cache."""
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        s.bind(("127.0.0.1", port))
+    except OSError:
+        return False
+    finally:
+        s.close()
+    return True
+
+
+def _pick_free_port(start, end):
+    """Return the first free port in [start, end] inclusive, or None.
+    Matches bin/burnctl.js::findFreePort(8080, 8090)."""
+    for p in range(start, end + 1):
+        if _is_port_free(p):
+            return p
+    return None
+
+
 def cmd_dashboard():
     global _pid_lock_handle
     _pid_lock_handle = _acquire_pid_lock()
@@ -197,6 +222,31 @@ def cmd_dashboard():
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--skip-init", action="store_true")
     args = parser.parse_args(sys.argv[2:])
+
+    # Port selection — match bin/burnctl.js semantics exactly.
+    # Explicit --port: try once, exit with hint if busy (burnctl.js:215-217).
+    # Default port: scan 8080..8090 (burnctl.js:221).
+    explicit_port = any(
+        a == "--port" or a.startswith("--port=") for a in sys.argv[2:]
+    )
+    if explicit_port:
+        if not _is_port_free(args.port):
+            print(
+                f"Port {args.port} is in use. Try: burnctl dashboard --port {args.port + 1}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+    else:
+        chosen = _pick_free_port(8080, 8090)
+        if chosen is None:
+            print(
+                "No free port found in 8080-8090. Try: burnctl dashboard --port <N>",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if chosen != args.port:
+            print(f"Port {args.port} busy, using {chosen}", file=sys.stderr)
+        args.port = chosen
 
     MAX_RESTARTS = 5
     restart_count = 0
