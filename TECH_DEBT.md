@@ -549,7 +549,12 @@ Last consolidated: 2026-04-24 (v4.5.3 gap-closure session).
 - **Added:** TD-15 fix 2026-04-30.
 
 ### TD-31 — `chat_title_sync.py` referenced but not shipped
-- **Status:** open
+- **Status:** closed (2026-05-01) — references excised from `db.py`,
+  `why_limit.py`, `server.py`, and `templates/dashboard.html`.
+  Endpoints (`/api/browser-chats`, `/api/browser-chats-recent`) and
+  schema (`browser_chat_sessions`) retained as live unused capability
+  awaiting a future collector. Removal of the unused capability is a
+  separate scope decision.
 - **Priority:** P3 (documentation/consistency drift, no user-facing
   failure now that TD-16 is resolved)
 - **Files:** `chat_title_sync.py` (does not exist); referenced from

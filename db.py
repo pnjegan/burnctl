@@ -411,7 +411,7 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_cas_polled ON claude_ai_snapshots(polled_at);
 
         -- Browser chat-title tracking (v4.4.0). Populated by a Mac-side
-        -- collector (chat_title_sync.py) that reads history.sqlite from
+        -- collector that reads history.sqlite from
         -- Chrome/Vivaldi and POSTs to /api/browser-chats. One row per
         -- claude.ai chat UUID. Duration is first-to-last page visit —
         -- an under-estimate, honest limitation (no per-message timing).

@@ -1371,7 +1371,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 conn.close()
 
         # ── Browser chat-title ingest (v4.4.0) ──
-        # Mac-side collector (chat_title_sync.py) reads Chrome/Vivaldi
+        # Mac-side collector reads Chrome/Vivaldi
         # history.sqlite, extracts claude.ai/chat/<uuid> rows, and POSTs
         # them here. Localhost-only (server binds 127.0.0.1) — the Mac
         # reaches it via SSH tunnel, same pattern as mac-sync.py.

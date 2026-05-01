@@ -403,7 +403,7 @@ LONG_BROWSER_SESSION_MIN = 60
 def _render_recent_browser_chats(conn):
     """Print the v4.4.0 'Recent Browser Chats' section.
 
-    Reads browser_chat_sessions (populated by Mac-side chat_title_sync.py).
+    Reads browser_chat_sessions.
     Groups by account, shows the most recent 10 chats per account within
     the last 3 days. Duration = first→last page visit — an under-estimate
     (we don't see per-message timing). Flags:
@@ -450,7 +450,7 @@ def _render_recent_browser_chats(conn):
     print(" === Recent Browser Chats (last 3 days) ===")
 
     if not rows:
-        print(" No chat titles yet — run chat_title_sync.py on your Mac.")
+        print(" No chat titles recorded yet.")
         return
 
     # Account label lookup — friendly "Plan (account_id)" where possible.
