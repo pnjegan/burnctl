@@ -173,11 +173,13 @@ def _detect_repeated_reads(tool_calls):
         file_path = inp.get("file_path") or inp.get("path") or inp.get("filename")
         if not file_path:
             continue
-        # Strip to basename — avoid persisting absolute paths that leak FS layout
-        # and project names into waste_events.detail_json.
-        read_counts[os.path.basename(file_path)] += 1
+        # Count by full path so two unrelated files sharing a basename in
+        # different directories are not collapsed into the same counter.
+        read_counts[file_path] += 1
     repeats = {p: c for p, c in read_counts.items() if c >= REPEATED_READ_THRESHOLD}
-    return len(repeats), {"files": [{"path": p, "reads": c} for p, c in repeats.items()]}
+    # Redact to basename in output — avoid persisting absolute paths that leak
+    # FS layout and project names into waste_events.detail_json.
+    return len(repeats), {"files": [{"path": os.path.basename(p), "reads": c} for p, c in repeats.items()]}
 
 
 # ─── BAD_COMPACT detection (v2-F3) ───────────────────────────────
