@@ -2336,6 +2336,25 @@ def cmd_version_check():
     run_version_check()
 
 
+def cmd_admin_prune_scan_state():
+    """`burnctl admin prune-scan-state [--dry-run]` — remove scan_state
+    rows whose source JSONL no longer exists on disk (F-02 cleanup).
+    Hot-path integration deferred."""
+    dry_run = "--dry-run" in sys.argv
+    from db import get_conn
+    from scanner import _prune_orphaned_scan_state
+    conn = get_conn()
+    try:
+        n = _prune_orphaned_scan_state(conn, dry_run=dry_run)
+        if dry_run:
+            print(f"[dry-run] would prune {n} orphaned scan_state rows")
+        else:
+            conn.commit()
+            print(f"Pruned {n} orphaned scan_state rows")
+    finally:
+        conn.close()
+
+
 def main():
     if len(sys.argv) < 2 or sys.argv[1] in ("--help", "-h", "help"):
         print(HELP_TEXT.format(vps_ip=VPS_IP))
@@ -2379,6 +2398,21 @@ def main():
         print('  python3 cli.py fix start "<description>" --project X')
         print("  python3 cli.py fix result <measurement_id>")
         print("  python3 cli.py fix apply <fix_id>")
+        sys.exit(1)
+
+    # Two-word commands: `admin prune-scan-state [--dry-run]`
+    if cmd == "admin":
+        sub = sys.argv[2] if len(sys.argv) >= 3 else ""
+        if sub == "prune-scan-state":
+            cmd_admin_prune_scan_state()
+            return
+        if sub in ("-h", "--help", "help", ""):
+            print("Usage:")
+            print("  python3 cli.py admin prune-scan-state [--dry-run]")
+            sys.exit(0)
+        print(f"Unknown admin subcommand: {sub}")
+        print("Usage:")
+        print("  python3 cli.py admin prune-scan-state [--dry-run]")
         sys.exit(1)
 
     commands = {

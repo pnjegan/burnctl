@@ -222,6 +222,33 @@ def _set_scan_state(conn, filepath, offset, lines_processed):
     )
 
 
+def _prune_orphaned_scan_state(conn, dry_run: bool = False) -> int:
+    """Delete scan_state rows whose file_path no longer exists on disk.
+
+    F-02 partial: addresses orphan accumulation from directory renames /
+    JSONL removal. Hot-path integration intentionally deferred.
+
+    If dry_run, count without deleting. Returns count (deleted, or
+    would-delete in dry-run). Safe to run on empty table (returns 0).
+
+    Caller is responsible for conn.commit() — the helper performs the
+    DELETE on the connection but does not commit, so it can participate
+    in a larger transaction if a future caller wires it into one.
+    """
+    rows = conn.execute("SELECT file_path FROM scan_state").fetchall()
+    orphans = [r[0] for r in rows if r[0] and not os.path.exists(r[0])]
+    if not orphans:
+        return 0
+    if dry_run:
+        return len(orphans)
+    placeholders = ",".join("?" * len(orphans))
+    cursor = conn.execute(
+        f"DELETE FROM scan_state WHERE file_path IN ({placeholders})",
+        orphans,
+    )
+    return cursor.rowcount
+
+
 _UUID_PATTERN = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
 )
