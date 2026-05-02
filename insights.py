@@ -1,6 +1,7 @@
 """Insights engine — runs after every scan, generates actionable insights."""
 
 import json
+import os
 import sqlite3
 import time
 from datetime import datetime, timezone, timedelta
@@ -15,6 +16,21 @@ from analyzer import (
     account_metrics, window_metrics, project_metrics,
     compaction_metrics, model_rightsizing,
 )
+
+
+# Debounce cadences for _insight_exists_recent — env-overridable for testing
+# and tuning. Each constant names the cadence intent (BUDGET / SESSION / DAILY
+# / STRUCTURAL / WEEKLY) so call sites read by purpose, not by raw hour count.
+DEBOUNCE_BUDGET_HOURS = int(os.environ.get("BURNCTL_DEBOUNCE_BUDGET_HOURS", "6"))
+DEBOUNCE_SESSION_HOURS = int(os.environ.get("BURNCTL_DEBOUNCE_SESSION_HOURS", "12"))
+DEBOUNCE_DAILY_HOURS = int(os.environ.get("BURNCTL_DEBOUNCE_DAILY_HOURS", "24"))
+DEBOUNCE_STRUCTURAL_HOURS = int(os.environ.get("BURNCTL_DEBOUNCE_STRUCTURAL_HOURS", "48"))
+DEBOUNCE_WEEKLY_HOURS = int(os.environ.get("BURNCTL_DEBOUNCE_WEEKLY_HOURS", "168"))
+
+# Cleanup TTL for _clear_stale_insights — distinct intent from debounce
+# (drops stale rows; not a re-fire window). Numeric value coincides with
+# DEBOUNCE_DAILY_HOURS today but the two should remain tunable independently.
+INSIGHT_STALE_TTL_HOURS = int(os.environ.get("BURNCTL_INSIGHT_STALE_TTL_HOURS", "24"))
 
 
 def _now():
@@ -37,13 +53,15 @@ def _fetch_rows(conn, account=None, since=None):
     return conn.execute(sql, params).fetchall()
 
 
-def _clear_stale_insights(conn, max_age_hours=24):
+def _clear_stale_insights(conn, max_age_hours=INSIGHT_STALE_TTL_HOURS):
     cutoff = _now() - (max_age_hours * 3600)
     conn.execute("DELETE FROM insights WHERE dismissed = 0 AND created_at < ?", (cutoff,))
     conn.commit()
 
 
-def _insight_exists_recent(conn, insight_type, project, hours=12):
+def _insight_exists_recent(conn, insight_type, project, hours=DEBOUNCE_SESSION_HOURS):
+    # DEBOUNCE_SESSION_HOURS is the default debounce window. Other cadences
+    # (BUDGET / DAILY / STRUCTURAL / WEEKLY) are passed explicitly by callers.
     cutoff = _now() - (hours * 3600)
     row = conn.execute(
         "SELECT COUNT(*) FROM insights WHERE insight_type = ? AND project = ? AND created_at > ? AND dismissed = 0",
@@ -158,7 +176,7 @@ def generate_insights(conn=None):
         for threshold in [10, 5, 2]:
             if roi >= threshold:
                 milestone_key = f"roi_{threshold}x"
-                if _insight_exists_recent(conn, "roi_milestone", f"{acct_key}_{milestone_key}", hours=168):
+                if _insight_exists_recent(conn, "roi_milestone", f"{acct_key}_{milestone_key}", hours=DEBOUNCE_WEEKLY_HOURS):
                     break
                 label = acct_info["label"]
                 plan_cost = acct_info.get("monthly_cost_usd", 0)
@@ -184,7 +202,7 @@ def generate_insights(conn=None):
             avg_day = sum(sum(v.values()) for v in day_sessions.values()) / len(day_sessions)
             if total > avg_day * 1.5:
                 top_project = max(heaviest[1].items(), key=lambda x: x[1])[0]
-                if not _insight_exists_recent(conn, "heavy_day", f"{acct_key}_{day_name}", hours=168):
+                if not _insight_exists_recent(conn, "heavy_day", f"{acct_key}_{day_name}", hours=DEBOUNCE_WEEKLY_HOURS):
                     label = ACCOUNTS[acct_key]["label"]
                     msg = f"{day_name}s are your heaviest Claude day — {top_project} pattern"
                     detail = json.dumps({"day": day_name, "sessions": total, "top_project": top_project})
@@ -208,7 +226,7 @@ def generate_insights(conn=None):
                     min_usage = block
                     best_start = start_h
 
-            if not _insight_exists_recent(conn, "best_window", acct_key, hours=168):
+            if not _insight_exists_recent(conn, "best_window", acct_key, hours=DEBOUNCE_WEEKLY_HOURS):
                 end_h = (best_start + 5) % 24
                 msg = f"Your quietest window is {best_start}:00-{end_h}:00 UTC — ideal for autonomous runs"
                 detail = json.dumps({"start_hour": best_start, "end_hour": end_h, "tokens_in_block": min_usage})
@@ -344,7 +362,7 @@ def generate_insights(conn=None):
             _COMPACT_INST = {}
         for r in bad_rows:
             proj = r["project"] or "Other"
-            if _insight_exists_recent(conn, "bad_compact_detected", proj, hours=24):
+            if _insight_exists_recent(conn, "bad_compact_detected", proj, hours=DEBOUNCE_DAILY_HOURS):
                 continue
             n = r["n"] or 0
             instr = _COMPACT_INST.get(proj) or _COMPACT_INST.get(
@@ -374,7 +392,7 @@ def generate_insights(conn=None):
             limit = b["budget_usd"]
             pct = b["budget_pct"]
             if cost > limit:
-                if not _insight_exists_recent(conn, "budget_exceeded", acct_id, hours=6):
+                if not _insight_exists_recent(conn, "budget_exceeded", acct_id, hours=DEBOUNCE_BUDGET_HOURS):
                     over = cost - limit
                     msg = (f"{label} exceeded daily budget — ${cost:.2f} spent vs "
                            f"${limit:.2f} limit (${over:.2f} over). Slow down or switch to Sonnet.")
@@ -382,7 +400,7 @@ def generate_insights(conn=None):
                     insert_insight(conn, acct_id, acct_id, "budget_exceeded", msg, detail)
                     generated += 1
             elif pct > 80:
-                if not _insight_exists_recent(conn, "budget_warning", acct_id, hours=6):
+                if not _insight_exists_recent(conn, "budget_warning", acct_id, hours=DEBOUNCE_BUDGET_HOURS):
                     proj_daily = b["projected_daily"]
                     msg = (f"{label} at {pct:.0f}% of daily budget — projected "
                            f"${proj_daily:.2f} vs ${limit:.2f} limit")
@@ -480,7 +498,7 @@ def generate_insights(conn=None):
             sid_short = (r["session_id"] or "")[:12]
             # Debounce per-session (not per-project) — key is sid_short
             if _insight_exists_recent(conn, "cost_outlier_session",
-                                      f"{proj}_{sid_short}", hours=168):
+                                      f"{proj}_{sid_short}", hours=DEBOUNCE_WEEKLY_HOURS):
                 continue
             cost = r["token_cost"] or 0
             date_str = datetime.fromtimestamp(
@@ -515,7 +533,7 @@ def generate_insights(conn=None):
             proj = r["project"] or "Other"
             fid = r["id"]
             key = f"{proj}_fix{fid}"
-            if _insight_exists_recent(conn, "fix_never_measured", key, hours=24):
+            if _insight_exists_recent(conn, "fix_never_measured", key, hours=DEBOUNCE_DAILY_HOURS):
                 continue
             hours = (_now() - (r["created_at"] or _now())) / 3600.0
             msg = (f"Fix #{fid} ({r['waste_pattern']}) applied {hours:.0f}h ago "
@@ -544,7 +562,7 @@ def generate_insights(conn=None):
             mech_cost = data.get("mechanical_cost") or 0
             if mech_cost <= 10.0:
                 continue
-            if _insight_exists_recent(conn, "subagent_model_waste", proj, hours=12):
+            if _insight_exists_recent(conn, "subagent_model_waste", proj):
                 continue
             savings = data.get("haiku_savings_estimate") or 0
             msg = (f"{proj}: ${mech_cost:.2f} in mechanical sub-agent work "
@@ -595,7 +613,7 @@ def generate_insights(conn=None):
             sid_short = sid[:12]
             key = f"{r['project']}_{sid_short}"
             if _insight_exists_recent(conn, "unbounded_subagent_prompt",
-                                      key, hours=168):
+                                      key, hours=DEBOUNCE_WEEKLY_HOURS):
                 continue
             # Re-extract prompt for evidence — show actual phrases, not a claim
             prompt = extract_subagent_prompt(r["source_path"])
@@ -645,7 +663,7 @@ def generate_insights(conn=None):
         ).fetchall()
         for r in rows:
             proj = r["project"]
-            if _insight_exists_recent(conn, "jit_skill_waste", proj, hours=24):
+            if _insight_exists_recent(conn, "jit_skill_waste", proj, hours=DEBOUNCE_DAILY_HOURS):
                 continue
             ratio_pct = round((r["read_ratio"] or 0) * 100, 0)
             est_tokens = int(r["sessions"] * 6900)
@@ -696,7 +714,7 @@ def generate_insights(conn=None):
         if delta_tokens > 0:
             delta_pct = (delta_tokens / prev["total_tokens"]) * 100.0
             if delta_pct >= 20.0:
-                if not _insight_exists_recent(conn, "baseline_sos_spike", "baseline", hours=24):
+                if not _insight_exists_recent(conn, "baseline_sos_spike", "baseline", hours=DEBOUNCE_DAILY_HOURS):
                     prev_names = {s.get("name") for s in prev.get("sources", [])}
                     new_sources = [s.get("name") for s in latest.get("sources", [])
                                    if s.get("name") not in prev_names]
@@ -733,7 +751,7 @@ def generate_insights(conn=None):
                 growth_pct = ((last - first) / first) * 100.0
                 # Require at least 5% growth to fire (noise floor)
                 if growth_pct >= 5.0:
-                    if not _insight_exists_recent(conn, "baseline_dod_growing", "baseline", hours=24):
+                    if not _insight_exists_recent(conn, "baseline_dod_growing", "baseline", hours=DEBOUNCE_DAILY_HOURS):
                         msg = (
                             f"Baseline overhead has grown {growth_pct:.0f}% over the "
                             f"last {len(chrono)} days. Review recently added "
@@ -779,7 +797,7 @@ def generate_insights(conn=None):
             # Keyword match: any session.project name contains this source name?
             if any(name and name in (k or "") for k in known):
                 continue
-            if _insight_exists_recent(conn, "dead_overhead_source", name, hours=48):
+            if _insight_exists_recent(conn, "dead_overhead_source", name, hours=DEBOUNCE_STRUCTURAL_HOURS):
                 continue
             tokens = int(src.get("tokens") or 0)
             usd_monthly = tokens * _BASELINE_PRICE_PER_TOKEN * _MONTHLY_SESSIONS
@@ -811,7 +829,7 @@ def generate_insights(conn=None):
             if tokens < 2000:
                 continue
             key = src.get("path") or src.get("name") or "claudemd"
-            if _insight_exists_recent(conn, "claudemd_bloat", key, hours=48):
+            if _insight_exists_recent(conn, "claudemd_bloat", key, hours=DEBOUNCE_STRUCTURAL_HOURS):
                 continue
             pct = (tokens / total_baseline) * 100.0
             msg = (
