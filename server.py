@@ -64,6 +64,10 @@ _data_cache_lock = threading.Lock()
 CACHE_TTL = 30  # seconds
 _server_start_time = time.time()
 
+# Set once at start_server() entry, read by handler threads. Single-write
+# before serve_forever; no locking required.
+_BOUND_PORT = 8080
+
 # Dedicated executor for timeout-bounded analysis — avoids leaking one-off Thread objects per request.
 _analysis_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="analysis")
 
@@ -1551,12 +1555,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return {}
         return {}
 
+    def _allowed_origins(self):
+        return {f"http://127.0.0.1:{_BOUND_PORT}", f"http://localhost:{_BOUND_PORT}"}
+
     def _check_origin(self):
         """Reject cross-origin mutating requests. Origin is only sent by browsers;
         direct curl/script calls omit it and are allowed through (auth still required)."""
-        allowed = {"http://127.0.0.1:8080", "http://localhost:8080"}
         origin = self.headers.get("Origin", "")
-        if origin and origin not in allowed:
+        if origin and origin not in self._allowed_origins():
             self._serve_json({"error": "forbidden"}, 403)
             return False
         return True
@@ -1593,8 +1599,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def _cors_origin(self):
         origin = self.headers.get("Origin", "")
-        allowed = {"http://127.0.0.1:8080", "http://localhost:8080"}
-        return origin if origin in allowed else "http://127.0.0.1:8080"
+        allowed = self._allowed_origins()
+        return origin if origin in allowed else f"http://127.0.0.1:{_BOUND_PORT}"
 
     def _serve_json(self, data, status=200):
         body = json.dumps(data, default=str).encode("utf-8")
@@ -1816,6 +1822,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
 
 def start_server(port=8080):
+    global _BOUND_PORT
+    _BOUND_PORT = port
     server = ThreadingHTTPServer(("127.0.0.1", port), DashboardHandler)
     print(f"Dashboard: http://127.0.0.1:{port} (localhost only)", flush=True)
     try:
