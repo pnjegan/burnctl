@@ -14,7 +14,8 @@ module.exports = {
     out_file: '/tmp/burnctl-out.log',
     log_date_format: 'YYYY-MM-DD HH:mm:ss',
     env: {
-      PORT: 8080
+      PORT: 8080,
+      BURNCTL_MASTER_KEY: process.env.BURNCTL_MASTER_KEY
     }
   }]
 }

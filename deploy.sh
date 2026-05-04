@@ -13,8 +13,17 @@ PROC=burnctl
 URL=http://localhost:8080/api/health
 
 echo "=== burnctl deploy ==="
+
+# Source master-key env file so pm2 inherits BURNCTL_MASTER_KEY on restart.
+# File is root:root 0600. Stage 2 of SEC-001 (audit-reports/2026-05-04-SEC-001-plan.md).
+if [ -f /etc/burnctl.env ]; then
+  set -a
+  source /etc/burnctl.env
+  set +a
+fi
+
 echo "Restarting pm2 process: $PROC"
-pm2 restart "$PROC" >/dev/null
+pm2 restart "$PROC" --update-env >/dev/null
 
 EXPECTED=$(python3 -c "import json; print(json.load(open('/root/projects/burnctl/package.json'))['version'])")
 echo "Expected version (package.json): $EXPECTED"
