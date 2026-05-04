@@ -5,6 +5,8 @@ import stat
 import time
 import re
 
+from crypto import decrypt as _crypto_decrypt
+
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "usage.db")
 
 
@@ -1599,7 +1601,17 @@ def get_claude_ai_snapshot_history(conn, account_id, limit=48):
 
 def get_setting(conn, key):
     row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
-    return row["value"] if row else None
+    if not row:
+        return None
+    value = row["value"]
+    if isinstance(value, str) and value.startswith("v1:"):
+        master_key = os.environ.get("BURNCTL_MASTER_KEY")
+        if not master_key:
+            raise RuntimeError(
+                f"BURNCTL_MASTER_KEY not set; cannot decrypt settings.{key}"
+            )
+        return _crypto_decrypt(value, master_key)
+    return value
 
 
 def set_setting(conn, key, value):
