@@ -249,6 +249,38 @@ def _prune_orphaned_scan_state(conn, dry_run: bool = False) -> int:
     return cursor.rowcount
 
 
+def _prune_unvisited_scan_state(conn, visited_paths, walked_roots) -> int:
+    """Delete scan_state rows under walked_roots that weren't visited this run.
+
+    F-02 hot-path integration. Source of truth is the os.walk visited set;
+    rows under data_paths actually walked this scan but absent from the
+    visited set are orphans and get deleted. Scoped to walked_roots so
+    account_filter scans don't sweep rows belonging to unfiltered accounts
+    or to data_paths that failed the os.path.isdir gate.
+
+    Returns count of deleted rows. Caller is responsible for conn.commit()
+    — same contract as _prune_orphaned_scan_state.
+    """
+    if not walked_roots:
+        return 0
+    normalized_roots = [r.rstrip(os.sep) for r in walked_roots]
+    rows = conn.execute("SELECT file_path FROM scan_state").fetchall()
+    orphans = []
+    for (path,) in rows:
+        if not path or path in visited_paths:
+            continue
+        if any(path == r or path.startswith(r + os.sep) for r in normalized_roots):
+            orphans.append(path)
+    if not orphans:
+        return 0
+    placeholders = ",".join("?" * len(orphans))
+    cursor = conn.execute(
+        f"DELETE FROM scan_state WHERE file_path IN ({placeholders})",
+        orphans,
+    )
+    return cursor.rowcount
+
+
 _UUID_PATTERN = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
 )
@@ -910,6 +942,8 @@ def _scan_all_locked(account_filter=None):
     project_map = get_project_map_config(conn)
     total_added = 0
     files_walked = 0
+    visited_paths: set = set()
+    walked_roots: list = []
 
     for account_key, acct in accounts.items():
         if account_filter and account_key != account_filter:
@@ -918,6 +952,7 @@ def _scan_all_locked(account_filter=None):
             if not os.path.isdir(data_path):
                 print(f"[scanner] {data_path} does not exist, skipping", file=sys.stderr)
                 continue
+            walked_roots.append(data_path)
 
             for root, dirs, files in os.walk(data_path):
                 for fname in files:
@@ -925,6 +960,7 @@ def _scan_all_locked(account_filter=None):
                         continue
                     files_walked += 1
                     filepath = os.path.join(root, fname)
+                    visited_paths.add(filepath)
                     added = scan_jsonl_file(filepath, root, conn, source_path=data_path, project_map=project_map)
                     total_added += added
 
@@ -957,6 +993,20 @@ def _scan_all_locked(account_filter=None):
             )
     except Exception as e:
         print(f"[scanner] baseline prune failed: {e}", file=sys.stderr)
+
+    # F-02 hot-path: prune scan_state rows under walked data_paths that
+    # weren't visited this run. Dominant orphan source in production is
+    # per-file sub-agent JSONL deletion (not directory rename). Scoped to
+    # walked_roots so account_filter scans don't sweep unfiltered accounts.
+    try:
+        pruned = _prune_unvisited_scan_state(conn, visited_paths, walked_roots)
+        if pruned > 0:
+            print(
+                f"[scanner] Pruned {pruned} orphaned scan_state rows",
+                file=sys.stderr,
+            )
+    except Exception as e:
+        print(f"[scanner] scan_state prune failed: {e}", file=sys.stderr)
 
     # v4.5.0: populate daily_snapshots for today (per account,per project).
     # Idempotent via UNIQUE(date,account,project) + ON CONFLICT upsert.
