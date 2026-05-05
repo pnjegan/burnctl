@@ -965,11 +965,25 @@ function authHeaders() {
     return 'green';
   }
 
-  function buildTabs(accountsList) {
+  function buildTabs(accountsList, windows, browser) {
     const c = $('tabs');
-    const withSessions = (accountsList || []).filter(a => a.sessions_count > 0 || a.has_browser_data === true || a.account_id === currentAccount);
+    windows = windows || {};
+    browser = browser || {};
+    // Mirror renderWindows enumeration: an account is visible iff it's
+    // currently selected, has CLI sessions, has window data, or has an
+    // active browser snapshot. The previous filter used has_browser_data,
+    // which is a *liveness* flag (5h/7d > 0) misused as a visibility flag —
+    // a registered Pro account idle in both windows would be hidden.
+    const visible = (accountsList || []).filter(a => {
+      if (a.account_id === currentAccount) return true;
+      if (a.sessions_count > 0) return true;
+      const w = windows[a.account_id];
+      const ba = browser[a.account_id];
+      const hasBrowser = ba && ba.status === 'active' && ba.snapshot;
+      return !!w || hasBrowser;
+    });
     let html = '<button class="tab' + (currentAccount === 'all' ? ' active' : '') + '" data-account="all">Combined</button>';
-    for (const a of withSessions) {
+    for (const a of visible) {
       const cls = currentAccount === a.account_id ? ' active' : '';
       html += '<button class="tab' + cls + '" data-account="' + esc(a.account_id) + '">' + esc(a.label) + '</button>';
     }
@@ -1899,7 +1913,7 @@ function authHeaders() {
   function paint(data) {
     var banner = $('first-run-banner');
     if (data.first_run) { banner.style.display = 'block'; } else { banner.style.display = 'none'; }
-    buildTabs(data.accounts_list || []);
+    buildTabs(data.accounts_list || [], data.windows, data.claude_ai_browser);
 
     // Detect browser-only account (no JSONL sessions, has browser data)
     var accts = data.accounts_list || [];
