@@ -1221,7 +1221,10 @@ function authHeaders() {
   // when titles are absent. Row colour-coding: >120min red, >60min
   // yellow, <=60min green. IST display.
   function renderBrowserChats() {
-    fetch('/api/browser-chats-recent')
+    // DASH-029: pass currentAccount so the panel respects the top-bar
+    // selector. 'all' = no filter (Combined view), matches /api/data and
+    // /api/insights conventions.
+    fetch('/api/browser-chats-recent?account=' + encodeURIComponent(currentAccount))
       .then(function(r) { return r.json(); })
       .then(function(resp) {
         var chats = (resp && resp.chats) || [];

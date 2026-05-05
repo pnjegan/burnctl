@@ -937,7 +937,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             # .detect_browser_sessions) when titled rows are empty for the
             # window. Each row carries `source` ('title' | 'snapshot') so
             # the frontend can render degraded entries appropriately.
+            # DASH-029: top-bar account selector reaches us as ?account=…;
+            # 'all' (or absent) keeps the combined view, otherwise restrict
+            # both the titled query and the snapshot fallback to that account.
             cutoff = int(time.time()) - 3 * 24 * 3600
+            account = params.get("account", ["all"])[0]
+            account_filter = account if account and account != "all" else None
             conn = get_conn()
             try:
                 has_table = conn.execute(
@@ -946,15 +951,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 ).fetchone()[0]
                 rows = []
                 if has_table:
-                    rows = conn.execute(
+                    sql = (
                         "SELECT title, account, browser, first_visit, "
                         "       duration_min, page_visits "
                         "FROM browser_chat_sessions "
-                        "WHERE first_visit > ? "
-                        "ORDER BY first_visit DESC "
-                        "LIMIT 20",
-                        (cutoff,),
-                    ).fetchall()
+                        "WHERE last_visit >= ?"
+                    )
+                    args = [cutoff]
+                    if account_filter:
+                        sql += " AND account = ?"
+                        args.append(account_filter)
+                    sql += " ORDER BY last_visit DESC LIMIT 20"
+                    rows = conn.execute(sql, args).fetchall()
 
                 if rows:
                     chats = [
@@ -971,11 +979,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     ]
                 else:
                     from browser_sessions import detect_browser_sessions
-                    account_rows = conn.execute(
+                    snap_sql = (
                         "SELECT DISTINCT account_id FROM claude_ai_snapshots "
-                        "WHERE polled_at >= ?",
-                        (cutoff,),
-                    ).fetchall()
+                        "WHERE polled_at >= ?"
+                    )
+                    snap_args = [cutoff]
+                    if account_filter:
+                        snap_sql += " AND account_id = ?"
+                        snap_args.append(account_filter)
+                    account_rows = conn.execute(snap_sql, snap_args).fetchall()
                     chats = []
                     for ar in account_rows:
                         aid = ar["account_id"]
