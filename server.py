@@ -349,7 +349,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
             conn = get_conn()
             rows = get_insights(conn, account, dismissed)
             conn.close()
-            self._serve_json([dict(r) for r in rows])
+            payload = [dict(r) for r in rows]
+            for ins in payload:
+                if "project" in ins and ins["project"] is not None:
+                    ins["project"] = _remap_project_name(ins["project"])
+            self._serve_json(payload)
 
         elif path == "/api/daily":
             # v4.5.0 daily brief — baseline overhead, SOS deltas, top actions.
