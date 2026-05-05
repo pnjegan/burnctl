@@ -1232,8 +1232,7 @@ function authHeaders() {
 
   // Self-fetching card for browser activity. Prefers titled chat rows
   // (browser_chat_sessions); falls back to snapshot-derived sessions
-  // when titles are absent. Row colour-coding: >120min red, >60min
-  // yellow, <=60min green. IST display.
+  // when titles are absent. IST display.
   function renderBrowserChats() {
     // DASH-029: pass currentAccount so the panel respects the top-bar
     // selector. 'all' = no filter (Combined view), matches /api/data and
@@ -1255,27 +1254,9 @@ function authHeaders() {
             '<thead><tr>' +
               '<th style="width:14%">Time (IST)</th>' +
               '<th style="width:14%">Account</th>' +
-              '<th style="width:10%">Duration</th>' +
-              '<th style="width:8%">Flag</th>' +
               '<th>Chat Title</th>' +
             '</tr></thead><tbody>';
         var rows = chats.map(function(c) {
-          var min = c.duration_min | 0;
-          // Matches spec: red > 120min, yellow > 60min, green <=60min.
-          var bg, flag, flagText;
-          if (min > 120) {
-            bg = 'background:rgba(239,68,68,0.12)';
-            flag = '&#9888;&#65039;';
-            flagText = 'context bloat';
-          } else if (min > 60) {
-            bg = 'background:rgba(245,158,11,0.12)';
-            flag = '&#9888;&#65039;';
-            flagText = 'long session';
-          } else {
-            bg = 'background:rgba(16,185,129,0.08)';
-            flag = '&#9989;';
-            flagText = 'ok';
-          }
           // IST = UTC+5:30. Format as MM-DD HH:MM.
           var ist = new Date((c.first_visit * 1000) + (5.5 * 3600 * 1000));
           var ts =
@@ -1283,9 +1264,6 @@ function authHeaders() {
             String(ist.getUTCDate()).padStart(2, '0') + ' ' +
             String(ist.getUTCHours()).padStart(2, '0') + ':' +
             String(ist.getUTCMinutes()).padStart(2, '0');
-          var dur = min >= 60
-            ? (Math.floor(min / 60) + 'h ' + String(min % 60).padStart(2, '0') + 'm')
-            : (min + 'min');
           var titleCell;
           if (c.source === 'snapshot') {
             titleCell = '<em style="color:var(--text-tertiary)">browser session</em>';
@@ -1294,11 +1272,9 @@ function authHeaders() {
               ' <span style="color:var(--text-tertiary);font-size:11px">(' + esc(c.browser || '') + ')</span>';
           }
           return (
-            '<tr style="' + bg + '">' +
+            '<tr>' +
               '<td style="font-family:var(--mono);font-size:12px">' + ts + '</td>' +
               '<td><span class="account-tag">' + esc(c.account) + '</span></td>' +
-              '<td style="font-family:var(--mono)">' + dur + '</td>' +
-              '<td>' + flag + ' <span style="color:var(--text-tertiary);font-size:11px">' + flagText + '</span></td>' +
               '<td>' + titleCell + '</td>' +
             '</tr>'
           );
