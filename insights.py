@@ -496,12 +496,19 @@ def generate_insights(conn=None):
     # ── 17. COST_OUTLIER_SESSION (v3) ──
     # Per-session surface for waste_events.pattern_type='cost_outlier'. The
     # data is populated by waste_patterns.py but no insight surfaced it.
+    # DASH-032: surface the session's actual run date (MIN(sessions.timestamp))
+    # instead of detected_at. detected_at clusters at scan time and confused
+    # users into thinking "5 spikes today" when those sessions ran weeks ago.
     try:
         rows = conn.execute(
-            "SELECT session_id, project, account, detected_at, token_cost "
-            "FROM waste_events "
-            "WHERE pattern_type='cost_outlier' AND detected_at > ? "
-            "ORDER BY token_cost DESC",
+            "SELECT we.id AS we_id, we.session_id, we.project, we.account, "
+            "       we.detected_at, we.token_cost, "
+            "       MIN(s.timestamp) AS session_start_ts "
+            "FROM waste_events we "
+            "LEFT JOIN sessions s ON s.session_id = we.session_id "
+            "WHERE we.pattern_type='cost_outlier' AND we.detected_at > ? "
+            "GROUP BY we.id "
+            "ORDER BY we.token_cost DESC",
             (_days_ago(7),),
         ).fetchall()
         for r in rows:
@@ -512,14 +519,32 @@ def generate_insights(conn=None):
                                       f"{proj}_{sid_short}", hours=DEBOUNCE_WEEKLY_HOURS):
                 continue
             cost = r["token_cost"] or 0
-            date_str = datetime.fromtimestamp(
+            session_start_ts = r["session_start_ts"]
+            if session_start_ts:
+                session_date_source = "session_join"
+                session_date = datetime.fromtimestamp(
+                    session_start_ts, tz=timezone.utc
+                ).strftime("%Y-%m-%d")
+            else:
+                session_date_source = "fallback"
+                session_date = datetime.fromtimestamp(
+                    r["detected_at"], tz=timezone.utc
+                ).strftime("%Y-%m-%d")
+            flagged_date = datetime.fromtimestamp(
                 r["detected_at"], tz=timezone.utc
             ).strftime("%Y-%m-%d")
-            msg = (f"{proj} spike — session {sid_short} on {date_str} "
-                   f"cost ${cost:.2f}. Check for runaway loop or subagent chain")
+            if session_date_source == "fallback" or session_date == flagged_date:
+                msg = (f"{proj} spike — session {sid_short} on {session_date} "
+                       f"cost ${cost:.2f}. Check for runaway loop or subagent chain")
+            else:
+                msg = (f"{proj} spike — session {sid_short} on {session_date} "
+                       f"(flagged {flagged_date}) cost ${cost:.2f}. "
+                       f"Check for runaway loop or subagent chain")
             detail = json.dumps({"session_id": r["session_id"],
                                  "cost_usd": round(cost, 2),
-                                 "date": date_str})
+                                 "session_date": session_date,
+                                 "flagged_date": flagged_date,
+                                 "session_date_source": session_date_source})
             insert_insight(conn, r["account"] or "all",
                            f"{proj}_{sid_short}",
                            "cost_outlier_session", msg, detail)
