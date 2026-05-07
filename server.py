@@ -1396,6 +1396,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
         # them here. Localhost-only (server binds 127.0.0.1) — the Mac
         # reaches it via SSH tunnel, same pattern as mac-sync.py.
         elif path == "/api/browser-chats":
+            # SEC-001: enforce X-Sync-Token, mirroring /api/claude-ai/sync's
+            # inline check (server.py:1677-1683). Trust boundary is the sync
+            # token — if it matches, we trust the pushed chat rows.
+            received_token = self.headers.get("X-Sync-Token", "").strip()
+            conn = get_conn()
+            try:
+                stored_token = get_setting(conn, "sync_token")
+            finally:
+                conn.close()
+            if not stored_token or not hmac.compare_digest(
+                    received_token.encode("utf-8"),
+                    stored_token.strip().encode("utf-8")):
+                self._serve_json({"ok": False, "error": "invalid sync token"}, 403)
+                return
             data = body or {}
             chats = data.get("chats")
             if not isinstance(chats, list):
