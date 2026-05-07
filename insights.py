@@ -429,11 +429,22 @@ def generate_insights(conn=None):
             proj = r["project"] or "Other"
             if _insight_exists_recent(conn, "repeated_reads_project", proj):
                 continue
-            n = r["last_7d"] or 0
+            n_7d = r["last_7d"] or 0
+            n_30d = r["last_30d"] or 0
             cost = r["cost_usd"] or 0
-            msg = (f"{proj} re-read the same files {n} times in 7d — "
-                   f"${cost:.2f} wasted. Add 'never re-read' rule to CLAUDE.md")
-            detail = json.dumps({"last_7d": n, "last_30d": r["last_30d"],
+            # cost is always 30-day. When the 7d trigger fired (n_7d>=3) we
+            # surface the 7d count with 30d depth in parens. When only the
+            # 30d trigger fired (n_7d<3, n_30d>=5) we describe the 30d window
+            # alone — the previous unconditional "in 7d" wording produced
+            # "re-read 0 times in 7d — $X wasted" on 30d-trigger rows.
+            if n_7d >= 3:
+                msg = (f"{proj} re-read the same files {n_7d} times in 7d "
+                       f"({n_30d} in 30d) — ${cost:.2f} wasted. "
+                       f"Add 'never re-read' rule to CLAUDE.md")
+            else:
+                msg = (f"{proj} re-read the same files {n_30d} times in 30d — "
+                       f"${cost:.2f} wasted. Add 'never re-read' rule to CLAUDE.md")
+            detail = json.dumps({"last_7d": n_7d, "last_30d": n_30d,
                                  "cost_usd": round(cost, 2)})
             insert_insight(conn, r["account"] or "all", proj,
                            "repeated_reads_project", msg, detail)
