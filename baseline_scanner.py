@@ -28,6 +28,8 @@ from __future__ import annotations
 
 import os
 import sys
+import json
+import sqlite3
 import datetime
 from typing import List, Dict, Any
 
@@ -103,33 +105,155 @@ def _already_seen(path: str, seen: set) -> bool:
     return False
 
 
+def _resolve_tracked_projects(entries: list) -> List[str]:
+    """Resolve tracked_projects entries (paths or basenames) to absolute dirs.
+
+    For each entry:
+      - Non-string → _warn() and skip
+      - Empty/whitespace → silently skip
+      - Absolute path → use directly if isdir, else _warn() and skip
+      - Basename → try each parent in _DEFAULT_PROJECT_PARENTS in order;
+        first parent that contains the basename wins.
+
+    Basename collision example:
+      # "burnctl" basename + parents [~/projects, ~/code]
+      # → resolves to ~/projects/burnctl (first parent that has it)
+      # NOT ~/code/burnctl, even if it also exists
+    """
+    resolved: List[str] = []
+    for entry in entries:
+        if not isinstance(entry, str):
+            _warn(f"tracked_projects: ignoring non-string entry {entry!r}")
+            continue
+        e = os.path.expanduser(entry.strip())
+        if not e:
+            continue
+        if os.path.isabs(e):
+            if os.path.isdir(e):
+                resolved.append(e)
+            else:
+                _warn(f"tracked_projects: absolute path not a directory: {e}")
+            continue
+        # Basename: first matching default-parent wins
+        matched = False
+        for parent in _DEFAULT_PROJECT_PARENTS:
+            candidate = os.path.join(parent, e)
+            if os.path.isdir(candidate):
+                resolved.append(candidate)
+                matched = True
+                break
+        if not matched:
+            _warn(f"tracked_projects: basename {e!r} not found under any default parent")
+    return resolved
+
+
+def _read_tracked_projects() -> "List[str] | None":
+    """Read settings.tracked_projects from usage.db.
+
+    Returns:
+      - None  → row missing, DB unavailable, or malformed value (caller falls
+                through to default scan)
+      - []    → row exists with explicit empty JSON array (operator escape
+                hatch: 'scan nothing'; caller does NOT fall through)
+      - List  → resolved absolute paths
+
+    DB resolution mirrors overhead_audit.py::load_db() — checks ./data/usage.db
+    then ~/.burnctl/data/usage.db. Never raises; all errors degrade to None.
+    """
+    candidates = [
+        "data/usage.db",
+        os.path.expanduser("~/.burnctl/data/usage.db"),
+    ]
+    db_path = next((p for p in candidates if os.path.exists(p)), None)
+    if db_path is None:
+        return None
+    try:
+        conn = sqlite3.connect(db_path)
+        try:
+            row = conn.execute(
+                "SELECT value FROM settings WHERE key='tracked_projects'"
+            ).fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error as e:
+        _warn(f"tracked_projects: db read failed: {e}")
+        return None
+    if row is None or row[0] is None:
+        return None  # row missing → fall through to default scan
+    raw = row[0]
+    # Explicit malformed-vs-empty branching (operator escape hatch)
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError) as e:
+        _warn(f"tracked_projects: malformed JSON ({e}) — falling back to default scan")
+        return None
+    if parsed is None or not isinstance(parsed, list):
+        _warn(f"tracked_projects: expected JSON array, got {type(parsed).__name__} — falling back")
+        return None
+    if len(parsed) == 0:
+        # Explicit empty list = 'scan nothing'. NOT a fallback signal.
+        # Returns [] so the caller short-circuits without falling through.
+        return []
+    return _resolve_tracked_projects(parsed)
+
+
 def _discover_project_roots() -> List[str]:
-    """v4.5.3 E-01. Return a deduplicated list of directories that are likely
+    """v4.5.3 E-01 (INV2). Return a deduplicated list of directories likely
     to contain real project CLAUDE.md files.
 
-    Priority order:
-      1. BURNCTL_PROJECT_ROOTS env var (colon-separated) — explicit opt-in.
-      2. Default parent directories under $HOME — each child dir is a
-         potential project root.
+    Resolution order:
+      1. BURNCTL_PROJECT_ROOTS env var (colon-separated paths) — additive
+         opt-in. Concatenates with Tier-3 default-parent scan if Tier-2 is
+         not set. Preserves pre-INV2 behavior bit-for-bit.
+      2. settings.tracked_projects JSON array — operator-curated allow-list.
+         When set (non-None), REPLACES Tier-3 entirely. Empty list [] is
+         honored as 'scan nothing' (does not fall through).
+      3. Default parent directories under $HOME (one level deep per parent) —
+         fallback when Tier-2 is unset.
+
+    Combinations:
+      - env only           → env paths + Tier-3 default scan (concat, dedup)
+      - settings only      → settings paths only
+      - env + settings     → env paths + settings paths (Tier-1 always
+                             additive; Tier-2 still suppresses Tier-3)
+      - env + settings=[]  → env paths only (Tier-1 survives empty Tier-2)
+      - none               → Tier-3 default scan only
+
+    Basename resolution example (Tier 2):
+      "burnctl" basename + parents [~/projects, ~/code]
+        → resolves to ~/projects/burnctl (first parent that has it),
+        NOT ~/code/burnctl, even if both exist.
     """
     roots: List[str] = []
+    consumed = False  # True only when Tier-2 fires (suppresses Tier-3)
+
+    # Tier 1: BURNCTL_PROJECT_ROOTS env var — additive, never short-circuits
     env_override = os.environ.get("BURNCTL_PROJECT_ROOTS", "").strip()
     if env_override:
         for p in env_override.split(":"):
             p = os.path.expanduser(p.strip())
             if p and os.path.isdir(p):
                 roots.append(p)
-    # Default parents: each of these is scanned one level deep (child is a project)
-    for parent in _DEFAULT_PROJECT_PARENTS:
-        if not os.path.isdir(parent):
-            continue
-        try:
-            for entry in sorted(os.listdir(parent)):
-                child = os.path.join(parent, entry)
-                if os.path.isdir(child):
-                    roots.append(child)
-        except OSError as e:
-            _warn(f"could not walk {parent}: {e}")
+
+    # Tier 2: settings.tracked_projects — extends roots, suppresses Tier-3
+    tracked = _read_tracked_projects()
+    if tracked is not None:
+        roots.extend(tracked)
+        consumed = True
+
+    # Tier 3: default parent walk — only if Tier-2 did not fire
+    if not consumed:
+        for parent in _DEFAULT_PROJECT_PARENTS:
+            if not os.path.isdir(parent):
+                continue
+            try:
+                for entry in sorted(os.listdir(parent)):
+                    child = os.path.join(parent, entry)
+                    if os.path.isdir(child):
+                        roots.append(child)
+            except OSError as e:
+                _warn(f"could not walk {parent}: {e}")
+
     # Deduplicate by realpath while preserving first-seen order
     seen: set = set()
     deduped: List[str] = []
