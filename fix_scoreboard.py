@@ -62,7 +62,9 @@ def run_fix_scoreboard():
     cur = conn.cursor()
 
     # Pull latest measurement per fix so each fix shows once.
-    # Note: real schema has `created_at` (no `applied_at`); we use that.
+    # Sort by applied_at (when the fix took effect) so the scoreboard
+    # reflects fix-effective order, not insert order. Fall back to
+    # created_at for legacy rows where applied_at was never backfilled.
     # Fix F (CORR-10/11): also pull latest metrics_json so the render can
     # re-derive delta from a point-in-time snapshot instead of re-capturing
     # live — keeps headline values stable between renders.
@@ -78,7 +80,7 @@ def run_fix_scoreboard():
             SELECT MAX(measured_at) FROM fix_measurements WHERE fix_id = f.id
           )
         WHERE f.status IN ('confirmed', 'measuring', 'applied')
-        ORDER BY f.id DESC
+        ORDER BY COALESCE(f.applied_at, f.created_at) DESC
     """)
     fixes = cur.fetchall()
 
