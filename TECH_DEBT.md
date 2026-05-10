@@ -619,6 +619,164 @@ Last consolidated: 2026-04-24 (v4.5.3 gap-closure session).
   settings page.
 - **Added:** TD-18 reconciliation 2026-04-30.
 
+### TD-34 — daily_snapshots.cache_hit_rate unit drift (CACHE-UNITS)
+- **Status:** open
+- **Priority:** P2 (silent 100x errors on any window-aggregate read)
+- **Files:** `daily_snapshots` table, writers TBD (recent commit
+  changed compute-before-insert from percent to fraction).
+- **Severity:** real bug, reproducible, has evidence.
+- **Surfaced during:** DASH-001 reproducibility check 2026-05-08
+  (DASH-001 itself closed wontfix — see Rule #24 evidence pack).
+- **Symptom:** Same column `daily_snapshots.cache_hit_rate` stores
+  values in two different units depending on row date:
+
+  | date       | account      | project | cache_hit_rate | unit            |
+  |------------|--------------|---------|----------------|-----------------|
+  | 2026-05-08 | personal_max | burnctl | 0.9008         | fraction (0-1)  |
+  | 2026-05-07 | personal_max | burnctl | 0.9445         | fraction (0-1)  |
+  | 2026-05-07 | personal_max | Tidify  | 0.8799         | fraction (0-1)  |
+  | 2026-05-07 | personal_max | Other   | 0.9067         | fraction (0-1)  |
+  | 2026-05-06 | personal_max | Other   | 88.2           | percent (0-100) |
+  | 2026-05-06 | personal_max | burnctl | 61.2           | percent (0-100) |
+  | 2026-05-05 | personal_max | Tidify  | 92.6           | percent (0-100) |
+
+- **Reproducibility:** Confirmed via SQL pull on 2026-05-08 ~10:00 IST.
+  Pattern: rows written from 2026-05-07 onward use fraction; rows from
+  2026-05-06 and earlier use percent. Inflection point falls within
+  the May 7 spike day where 547 sessions were recorded.
+- **Likely cause:** A recent commit changed how `cache_hit_rate` is
+  computed before insert into `daily_snapshots`, switching from
+  percentage to fraction. Backfill of older rows did not happen.
+- **Impact:** Downstream consumers reading
+  `daily_snapshots.cache_hit_rate` receive 100x discrepancy between
+  old and new rows. Any aggregate over a window straddling
+  2026-05-06 / 2026-05-07 boundary produces nonsense. Currently
+  `/api/projects` appears to compute freshly from `sessions` table
+  (Formula A) rather than reading from `daily_snapshots`, so
+  dashboard headline is unaffected — but any future feature that
+  reads `daily_snapshots` directly will break silently.
+- **Fix shape candidates (operator decides):**
+  1. Backfill: re-run aggregation with consistent unit for all
+     historical rows. Pick fraction or percent, apply uniformly.
+  2. Forward-only: leave history as-is, document the boundary,
+     coerce on read in any consumer that reads this column.
+  3. Schema fix: add `cache_hit_rate_unit TEXT` column ('fraction'
+     vs 'percent') and require explicit conversion at read.
+- **Acceptance:** All rows in `daily_snapshots.cache_hit_rate` use
+  one declared unit (or the unit is explicit per row), and at least
+  one downstream consumer reads safely across the May 6/7 boundary.
+- **Added:** 2026-05-08, surfaced during DASH-001 inventory.
+
+### TD-35 — Two cache_hit formulas in codebase (CACHE-FORMULA-DRIFT)
+- **Status:** open
+- **Priority:** P3 (cosmetic today; real bug if either path becomes the headline source)
+- **Files:**
+  - Formula A (4-term denom): `analyzer.py:64`, `analyzer.py:255`,
+    `fix_tracker.py:159` — `cache_read / (cache_read + cache_create + input + output) * 100`
+  - Formula B (2-term denom): `server.py:550`, `cli.py:1416` —
+    `cr / max(cr + in_tok, 1) * 100`
+  - Subtitle on dashboard claims Formula B but reads Formula A:
+    `templates/dashboard.html:1092` — sub: "cache reads / (cache reads + input)"
+- **Symptom:** Two different cache_hit definitions exist. On the
+  same data, A produces 84-98%, B produces 99.996% (when input is
+  small vs cache_read). Live `/api/projects` returns Formula A.
+  Dashboard subtitle describes Formula B. Mismatch is cosmetic
+  today — but if any future feature surfaces Formula B as the
+  headline, two answers become user-visible for "cache hit rate".
+- **Fix shape:** Pick one canonical formula, document it once in
+  `docs/schema.md`, replace the other in all 5 call sites, fix the
+  dashboard subtitle to match.
+- **Added:** 2026-05-08, surfaced during DASH-001 inventory (paired
+  with TD-34).
+
+### TD-36 — npm tarball leaks `tools/get-derived-keys.py`
+- **Status:** resolved (f9bf36b, 2026-05-08)
+- **Resolved by:** commit f9bf36b — replace tools/*.py glob with
+  explicit allowlist in package.json files. Acceptance verified:
+  npm pack --dry-run | grep get-derived-keys returns empty.
+- **Priority:** P2 (ship-blocker — leaks maintainer-only tool to npm users on next publish)
+- **Files:** `package.json` `files` array OR `.npmignore`
+- **Severity:** real bug, reproducible, has evidence.
+- **Surfaced during:** burnctl-auditor smoke test 2026-05-08
+  (Check 5 npm hygiene). Verified independently via Rule #24
+  reproducibility check.
+- **Evidence:** `npm pack --dry-run` from project root includes:
+  ```
+  npm notice 3.7kB   tools/get-derived-keys.py
+  ```
+  This file is a maintainer-only utility for deriving local OAuth
+  keys; it must not ship to npm users.
+- **Standing rule violated:** *"npm pack --dry-run before every
+  publish — no .env, no usage.db, no CLAUDE.md in tarball"*
+  (rules/burnctl.md). `tools/get-derived-keys.py` is implicitly
+  in the same forbidden category — auditor agent's check 5 lists
+  it explicitly.
+- **Fix shape (operator decides):**
+  1. Add `tools/get-derived-keys.py` to `.npmignore`.
+  2. Remove `tools/` from `package.json` `files` array and
+     explicitly enumerate the user-facing files
+     (`tools/chat_title_sync.py`, `tools/mac-sync.py`,
+     `tools/oauth_sync.py`, `tools/sync-daemon.py`,
+     `tools/hooks/post-session.sh`,
+     `tools/hooks/prevent_repeated_reads.py`).
+  3. Move `tools/get-derived-keys.py` outside the `tools/`
+     directory if it should never have been there.
+- **Acceptance:** `npm pack --dry-run | grep get-derived-keys`
+  returns empty before next `npm publish`.
+- **Added:** 2026-05-08, surfaced during auditor smoke test
+  + Rule #24 reproducibility check (filed as B4 in
+  `audit-reports/2026-05-08-auditor-blocker-triage.md`).
+
+### TD-37 — burnctl-auditor checks 2 and 4 produce false-positive blockers
+- **Status:** open
+- **Priority:** P3 (auditor will keep firing NO-GO nightly until refined; tolerable noise but degrades signal quality)
+- **Files:** `~/.claude/agents/burnctl-auditor.md`
+- **Severity:** agent-quality bug, reproducible, has evidence.
+- **Surfaced during:** Rule #24 triage of auditor smoke-test
+  blockers 2026-05-08. 3 of 4 auditor blockers (B1, B3 fully
+  WONTFIX as false positives; B2 WONTFIX-DEFERRED) were not real
+  ship-blockers.
+- **Symptom 1 (Check 2 — Hardcoded paths):** The grep
+  `grep -rn "projects/burnctl\|/root/projects" *.py bin/` flags:
+  - Canonical multi-path fallback list candidates (legitimate per
+    `overhead_audit.py::load_db()` pattern)
+  - The leak detector itself (`daily_qa.py:90-91`
+    `_DEFAULT_LEAK_PATTERNS` literal strings used to *detect*
+    leaks, not produce them)
+  - Maintainer-only files not in the npm tarball
+    (`burnctl_test_runner.py`, confirmed absent from
+    `npm pack --dry-run` output)
+- **Symptom 2 (Check 4 — Schema drift):** The grep
+  `grep -rn "token_cost\|start_time\|waste_type\|fix_id" *.py`
+  flags:
+  - `waste_events.token_cost` (real schema column in `db.py:267`,
+    distinct from `sessions.cost_usd`)
+  - `fix_measurements.fix_id` (real FK column in `db.py:295`,
+    references `fixes.id`)
+  - `start_time` used as in-memory dict keys in
+    `browser_sessions.py` (not a DB column reference at all)
+- **Root cause:** Both checks grep symbol names without
+  discriminating: which *table* the column belongs to, whether
+  the symbol is a DB column or a Python identifier, or whether
+  the file is shipped to users. Schema-guard agent has the
+  table-aware logic; auditor's check 4 should defer to it.
+- **Fix shape candidates (operator decides):**
+  1. Refine check 2 to exclude (a) fallback-list candidate
+     contexts, (b) `_DEFAULT_LEAK_PATTERNS` and similar
+     leak-detector tuples, (c) files not in `npm pack --dry-run`
+     output.
+  2. Replace check 4 with a call to schema-guard's drift report
+     (read-only consume), instead of a coarse grep.
+  3. Tighten the agent's verdict logic so partial-evidence checks
+     emit WARN not BLOCKER.
+- **Acceptance:** A clean codebase day produces a `GO` verdict
+  from the auditor (today's smoke test produces NO-GO with 1
+  real blocker B4 — once B4 is fixed, the auditor should return
+  GO, not continue flagging B1+B3).
+- **Added:** 2026-05-08, surfaced during Rule #24 triage of
+  auditor smoke-test (filed as triage matrix at
+  `audit-reports/2026-05-08-auditor-blocker-triage.md`).
+
 ### BURNCTL-DATA-1 — Orphan waste_events with no matching sessions row
 - **Status:** open
 - **Priority:** P3 (data integrity; user-visible symptom currently masked
