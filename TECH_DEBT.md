@@ -619,6 +619,90 @@ Last consolidated: 2026-04-24 (v4.5.3 gap-closure session).
   settings page.
 - **Added:** TD-18 reconciliation 2026-04-30.
 
+### BURNCTL-DATA-1 — Orphan waste_events with no matching sessions row
+- **Status:** open
+- **Priority:** P3 (data integrity; user-visible symptom currently masked
+  by the savings-gate in 8de43b8 — investigate before next verdict-logic
+  change)
+- **Files:** `fix_tracker.py:115-257` (`capture_baseline` — two
+  independent project/time queries with no JOIN); scanner write path
+  for `waste_events` and `sessions` (callers TBD).
+- **Severity:** medium (data integrity; user-visible symptom currently
+  masked by the savings-gate in 8de43b8).
+- **Surfaced during:** Fix F follow-up session 2026-05-09 — diagnostic
+  trace of fix #12 (WikiLoop) revealed the orphan condition while
+  investigating phantom $316.79/mo savings.
+- **Symptom (now suppressed):** `compute_delta` produced
+  `tokens_saved=1,352,873` and `api_equivalent_savings_monthly=$316.79`
+  on a `worsened` verdict, because the attribution math reads
+  per-turn token averages (`avg_tokens_per_turn`,
+  `avg_cache_read_per_turn`) computed from the `sessions` query while
+  `waste_events` counts come from a parallel query with no JOIN.
+  When the post-fix sessions window is empty, the per-turn averages
+  collapse to 0 and `current.tokens_wasted_*` evaluates to 0 — making
+  `baseline - current` a baseline echo, not a measured reduction.
+  Suppressed by 8de43b8 (savings-gate) at the user-visible layer; the
+  underlying data inconsistency in `waste_events` vs `sessions` remains.
+- **Reproducibility:** Fix #12 (WikiLoop). 7 `waste_events` rows exist
+  in the post-fix window starting `detected_at >= 1776350376`; the
+  `session_id`s those events reference are not present in `sessions`
+  for `project='WikiLoop' AND timestamp >= 1776350376` (0 rows). The
+  most recent WikiLoop `sessions` row (`timestamp=1775917148`)
+  predates the fix by ~5 days. All 7 orphan events were emitted in a
+  single scanner run at `detected_at=1776412123`.
+- **Hypotheses to investigate:**
+  1. Timing — scanner persists `waste_events` before the corresponding
+     `sessions` rows are written.
+  2. Pruning — `sessions` rows pruned/rotated independently of
+     `waste_events` for the same `session_id`.
+  3. Predicate mismatch — `capture_baseline`'s sessions query and
+     waste_events query use slightly different project/time predicates.
+- **Diagnostic starting points:**
+  - `fix_tracker.py:115-257` — the two independent queries (sessions
+    L130-144, waste_events L168-194). No JOIN, no shared session_id
+    predicate.
+  - Scanner write path — confirm `waste_events` insert order relative
+    to `sessions` insert; check if either path is reachable without
+    the other.
+  - SQL check on fix #12's WikiLoop:
+    ```sql
+    SELECT session_id, detected_at FROM waste_events
+    WHERE project='WikiLoop' AND detected_at >= 1776350376;
+    SELECT session_id, timestamp FROM sessions
+    WHERE project='WikiLoop' AND timestamp >= 1776350376;
+    ```
+    Confirm session_id sets do not intersect (already verified once on
+    2026-05-09; rerun before any fix).
+- **Decision required before fix:** Should orphan `waste_events` be
+  discarded at scan time, or should `capture_baseline` JOIN
+  `waste_events` to `sessions` to only count events that have a paired
+  session row? Defer this design choice to the investigation session.
+- **Fix shape candidates (operator decides):**
+  1. Scan-time: drop `waste_events` whose `session_id` has no row in
+     `sessions` for the same project/timestamp.
+  2. Read-time: rewrite `capture_baseline`'s waste query as `INNER
+     JOIN sessions ON session_id` so attribution and counts share a
+     single source of truth.
+  3. Schema-level: add a NOT NULL FK from `waste_events.session_id`
+     to `sessions.session_id` (cascading delete) and treat the current
+     orphans as a one-off cleanup.
+- **Related commits:**
+  - `8de43b8` — savings-gate (suppresses symptom; does not fix root
+    cause)
+  - `24f7b79` — directional verdict checks (correct; not affected by
+    this bug)
+- **Related TD entries:** TD-H-05 — Zero-session waste_events verdict
+  (UX/verdict-correctness layer; same input data condition surfaces
+  there from a different angle).
+- **Acceptance:** For every `fix_measurements` row produced by
+  `compute_delta`, either (a) `current.sessions_count > 0` AND every
+  `waste_events.session_id` in the window has a paired `sessions`
+  row, or (b) the gate fires and savings are zeroed with
+  `savings_unreliable_reason` set. No silent attribution-collapse
+  paths remain.
+- **Added:** 2026-05-09, filed during the Fix F follow-up session
+  (commits 8e106bf + 8de43b8).
+
 ---
 
 ## Resolved in v4.5.3 (this session)
