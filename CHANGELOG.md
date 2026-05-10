@@ -3271,3 +3271,703 @@ v4.5.5 hotfix-on-hotfix), plus a full-day narrative at
 - 80/80 unit tests pass. QA gate 18 WOW · 2 OK · 0 DOD (both OKs
   expected thin-data).
 - Working tree clean at session end.
+
+## [2026-05-01] Session 47 — consolidated findings table (audit-only, no code)
+
+### Highlights
+- Pure intelligence/audit session. No code touched; no commits.
+  Three artifacts produced under `audit-reports/` (all
+  gitignored). Built a single 231-row mechanical merge of every
+  audit ever produced for this repo so future fix-cycles have
+  one cross-referenced index instead of 17 scattered docs.
+
+### Added
+- **`audit-reports/2026-05-01-harness-gap-audit.md`** (sha
+  `c01c3339`, 558 lines). 9-section + Tables A/B inventory of
+  current waste-detection coverage against four harness-side
+  anti-patterns (PTC opportunity, compaction-needed, upfront
+  schema loading, sub-agent fan-out). Identified 4 cross-cutting
+  gaps (vocab drift, schema drift, F4 not shipped, per-turn
+  data only in JSONL). Saved verbatim from a prior CC session
+  output, then trimmed to a 5-line factual preamble after
+  correction (originally had a fabricated `Auditor:` line +
+  Scope/Method paragraphs that weren't in source).
+
+- **`audit-reports/2026-05-01-consolidated-findings.md`** (sha
+  `863638b8`, 682 lines, 231 rows). Mechanical merge of 17
+  audit artifacts: TECH_DEBT.md (47 TD entries), the 6-dimension
+  Apr-22 parallel audits (SEC/F/AR/P/CORR/BH = 100 findings),
+  meta-review (10 symptoms), inventory verification (1
+  BLOCKER), v4.4.0-rc tracker (20 RC-* IDs), `burnctl-complete-audit.txt`
+  (29 CA-* IDs), 2026-04-20 external review (29 A1..G2/SD1..SD4),
+  END_USER_REVIEW.md (23 EU-* IDs), harness gap (8 HG-* IDs),
+  deferred TDs (6 DEF-*), 2026-04-30 handoff (1 HF-*), F4 design
+  (2 F4D-*). Each row has Source, File:Line, Status, Related
+  cross-references, and TD-Mapped column. Severity preserved
+  per-source verbatim (no normalization). Three derivative
+  views: Section 2 cross-reference clusters, Section 3 the
+  167 findings NOT in TECH_DEBT.md, Section 4 audit health
+  flags including the missing `burnctl-bug-inventory-2026-04-22.md`
+  BLOCKER.
+
+- **`audit-reports/2026-05-01-consolidated-findings.md.bak-pre-K-supplemental`**
+  (sha `99d3014b`). Snapshot taken before the CA-supplemental
+  edits as rollback safety net.
+
+### Architecture Decisions
+- **No de-duplication in the consolidated table.** Each source
+  ID becomes its own row even when two sources describe the
+  same underlying issue (e.g., F-15 + AR-01 + SYM-6 + TD-01
+  all = load_db duplication). Cross-referencing handled by
+  the Related column rather than by collapse.
+  Why: collapsing loses the per-source severity, file:line,
+  and remediation phrasing. The cluster view in Section 2
+  gives the merged read.
+  Impact: future fix-cycles can pick a single ID to track
+  without losing visibility into the other sources that
+  flagged the same root cause.
+
+- **ID-prefix convention for sources without native IDs:**
+  SYM-N (meta-review), IV-N (inventory verification), RC-N
+  (rc tracker), CA-N (complete audit), EU-N (end-user review),
+  HG-N (harness gap), DEF-N (deferred TDs), HF-N (handoff),
+  F4D-N (F4 design). Original "Symptom #1" and "A.1" forms
+  reformatted to satisfy the verification regex
+  `^\| [A-Z]+-?[0-9]`. Source's intent preserved.
+  Impact: every row matches a deterministic regex; severity/
+  category/status can be tallied via awk pipelines.
+
+- **CA rows zero-padded to CA-01..CA-29.** First 9 came from
+  the head+tail sample of `burnctl-complete-audit.txt`; 20 more
+  added after re-reading the full 2,158-line file. Padding
+  applied across both Section 1 row IDs and Section 2 cluster
+  bullet citations.
+  Why: keeps lexical and numeric sort consistent now that
+  the count crossed 9.
+
+### Cross-references added (5 rows updated)
+- AR-10 (Vocab Drift) Related now cites CA-29 (waste_events.severity
+  mixed vocab)
+- CORR-01 (Brainworks 4-way collision) Related now cites CA-06
+- SYM-3 (Brainworks meta-symptom) Related now cites CA-06
+- CORR-11 ($1,708 headline drift) Related now cites CA-05
+  (headline is "API-equivalent", not invoice-level)
+- HG-6 (subagent_count column dead) Related now cites CA-28
+
+### Final distributions (231 rows)
+- Severity: 60 (unrated) · 43 HIGH · 39 MEDIUM · 27 LOW · 21 P3
+  · 18 CRITICAL · 12 INFO · 7 P2 · 2 P1 · 1 P4 · 1 BLOCKER
+- Category: 34 Bug · 30 Security · 28 Correctness · 26 Coverage Gap
+  · 19 Documentation · 18 Performance · 18 Architecture · 14
+  Fragility · 13 ROI Math · 10 UX · 10 Schema Drift · 5 Process
+  · 3 Vocab Drift · 3 Tech Debt
+- Status: 185 OPEN · 24 FIXED · 13 INFO · 8 DEFERRED · 1 BLOCKER
+- 167 findings have TD-Mapped="(none)" — the gap between live
+  TECH_DEBT.md ledger and what the audits captured.
+
+### Not changed (by design)
+- Zero source code edits. No `git diff` output. No commits.
+- TECH_DEBT.md left untouched — TD ledger reconciliation is
+  out of scope for this session; the 167 untracked findings
+  in Section 3 are the agenda for that future work.
+- No new TDs filed. Standard rule was "no editorialization,
+  no recommendations" — every promotion is a human call.
+- `audit-reports/burnctl-bug-inventory-2026-04-22.md` still
+  missing (BLOCKER from the Apr-22 inventory verification).
+  V1-V5 cross-cutting checks were re-confirmed; per-item
+  checks 1..16 remain deferred until the inventory is produced.
+
+### Test + QA gate
+- N/A — no code changed.
+- daily_qa.py not re-run this session (last green run still
+  18 WOW · 2 OK · 0 DOD from 2026-04-30, exit 0).
+
+### Known Issues / Not Done (carried to Session 48)
+- **CA-supplement is read-from-file, not from re-running the
+  audit.** `burnctl-complete-audit.txt` is dated 2026-04-22
+  v4.3.0; 9 days of state drift since. Some "OPEN" CA rows
+  may have closed silently in v4.4.0/v4.5.x. Re-verify before
+  acting on any CA-* finding.
+- **167 untracked findings (TD-Mapped="(none)") need triage.**
+  Section 3 of the consolidated file is the worklist. Prioritize
+  CRITICAL (18) and HIGH (43) rows that have no TD-* mapping.
+- **Section 2 cluster bullets at lines 622-630 still reference
+  pre-pad CA-N IDs.** Caught and fixed in Turn 3a (replaced 13
+  dash-prefix occurrences). Re-verify on next consolidated-file
+  edit if any new clusters are added.
+- **Source K (`burnctl-complete-audit.txt`) is now 100%
+  ingested.** No further extractions needed from that file.
+- **Carried from Session 46:**
+  - TD-31 (`chat_title_sync.py` referenced 11+ places, never
+    shipped) — P3, ~30 min for excise path
+  - TD-32 (5h window label clarity) — P3, copy-only
+  - TD-33 (Sonnet-only weekly sub-quota) — P3, ~45 min
+  - F4 implementation per `docs/f4-design.md` — Option B for
+    v4.7, ~3-4 hr, now traceable across CORR-10/CORR-11/SYM-1/
+    F4D-1/F4D-2/HG-7/RC-7/RC-DEF-2/DEF-1/CA-05 in the
+    consolidated table
+  - 6 deferred TDs in `.deferred-tds-2026-04-29.md` (now
+    DEF-1..DEF-6 in the table) — promote to TD-19..24
+  - TD-25 (rule debounce hardcoding, P2), TD-13 Phase 2 (108
+    caller sites), TD-14 (test isolation), `burnctl doctor`
+    — backlog after F4
+
+### Session metrics
+- 0 commits.
+- 3 files written (all gitignored).
+- 1 backup created.
+- 0 npm publishes.
+- Working tree clean at session end (same as session start).
+
+## [2026-05-01] Session 47 — Tier 1 audit-row closures + 287-finding triage
+
+### Fixed
+- **DEF-2** — duplicate dollar string in `TOP ACTIONS` daily brief: insight messages
+  already contained `~$X/mo`, then `cli.py` appended the same again. Now skipped
+  when message already contains a `/mo` token.
+  Why: render bug visible to anyone running `burnctl daily`.
+  Files: `cli.py:2176-2181`. Commit `8cc237d`.
+  Note: audit cited `daily_report.py::_recommendations_section` — actual print site is `cli.py`.
+
+- **BH-23 / E1** — hardcoded `$227.99` maintainer-private leak string in `daily_qa.py`
+  moved to gitignored `.burnctlignore` curated list. Scope expanded mid-fix to also
+  correct a latent loader bug: `_load_leak_patterns()` was replace-only despite a
+  docstring implying additive merge. Now returns the union of defaults + file entries
+  (defaults first, dedup, original order preserved).
+  Why: literal string was fragile against the next near-miss value (`$223.30`); split
+  would have shipped a known-broken intermediate state for path-leak detection.
+  Files: `daily_qa.py:86-122`, `.gitignore`, new `.burnctlignore` (gitignored).
+  Commit `5ed4ef0`. Smoke: 3 cases pass (file with `$227.99` → both detected; file
+  absent → defaults still detect paths; duplicate of a default → no double, no crash).
+
+- **BH-21** — stale `TODO(v3.1)` referencing `compliance_events` removed from
+  `analyzer.py` `compute_efficiency_score()` dimensions list.
+  Why: v3.1 shipped; TODO abandoned per audit cross-reference (CORR-05 / AR-05).
+  Files: `analyzer.py:1338-1341`. Commit `8c76142`.
+
+- **BH-24** — unused `re.IGNORECASE` flag removed from `scanner._UUID_PATTERN`.
+  Verified 217/217 real JSONL filenames are lowercase, so flag was inert.
+  Files: `scanner.py:225-228`. Commit `f887bb9`.
+
+- **BH-20** — `python3 cli.py --version` and `-v` now print version + exit 0,
+  matching the existing `bin/burnctl.js` shim behaviour.
+  Files: `cli.py:2289-2293`. Commit `400a5e3`.
+
+- **F-13** — `python3 cli.py dashboard` now scans ports 8080-8090 when 8080 is busy,
+  matching `bin/burnctl.js::findFreePort` semantics. Explicit `--port N` still tries
+  once and exits with hint if busy.
+  Why: developer entry point previously crashed in 5x retry loop on the same port
+  while the npm wrapper auto-scanned. Two probe helpers added; bind probe via
+  `socket.bind` (mirrors Node wrapper).
+  Files: `cli.py:189-262`. Commit `beedbe2`.
+
+- **TD-31** — references to `chat_title_sync.py` (Mac-side collector that was never
+  shipped to the repo) excised from 5 files. CLI hint at `why_limit.py:453` replaced
+  with honest empty-state ("No chat titles recorded yet."). Endpoints
+  (`/api/browser-chats`, `/api/browser-chats-recent`) and `browser_chat_sessions`
+  schema retained as live unused capability awaiting a future collector.
+  Why: real UX bug — users were told to run a script that doesn't exist.
+  Files: `why_limit.py:406,453`, `db.py:413-415`, `server.py:1373-1377`,
+  `templates/dashboard.html:825`, `TECH_DEBT.md:551-557`. Commit `8815ce9`.
+
+- **CA-08** — `CLAUDE.md` cron drift corrected from `06:00 UTC` to `00:00 UTC`
+  for `daily_qa.py`. Working-tree only — `CLAUDE.md` is gitignored at
+  `.gitignore:117`, no commit possible without scope creep.
+  Files: `CLAUDE.md:7,100-102` (working tree only).
+  Close memo: `audit-reports/2026-05-01-ca08-close.md`.
+
+### Added
+- **`.burnctlignore`** — gitignored curated list of maintainer-private leak patterns.
+  New home for historical/private dollar amounts so they never enter source control.
+  Currently contains `$227.99`.
+
+- **`audit-reports/2026-05-01-triage-classification.tsv`** — 184-row triage of every
+  OPEN finding in the consolidated audit table. Format: `ID\tCLASS\tevidence\tsub-cluster`.
+  Distribution: **142 GREEN · 41 YELLOW · 1 RED**. Sub-cluster counts: 8 SEC-drift,
+  8 F-drift (db.py + scanner.py), 4 self-inflicted by today's commits, 164 none.
+  Triage method: 30-60 second per row — does cited file:line still exist, does the
+  code match the symptom.
+
+- **`audit-reports/2026-05-01-newsletter.html`** — 8-chapter, 2828-word newspaper-style
+  newsletter ("Burnctl Dispatch") synthesising the project's evolution from
+  `BURNCTL_MASTER_DOC_V2.md` + audit-reports state. Single self-contained HTML
+  with Playfair Display + DM Mono via Google Fonts, system fallbacks. 32 KB.
+
+- **3 close memos in `audit-reports/`** (all gitignored):
+  - `2026-05-01-bh22-revisit.md` — BH-22 premise verified inaccurate; cited sites
+    (`fix_generator.py:299,550,633`) are filesystem walk + already-raising HTTPError
+    blocks, not LLM-error swallows. Recommend drop or re-cite.
+  - `2026-05-01-ca08-close.md` — CA-08 closed in working tree only; gitignore
+    status of `CLAUDE.md` itself flagged for future table reconciliation.
+  - `2026-05-01-ca09-close.md` — CA-09 closed by deletion; tap repo never created;
+    README documents 3 working install methods (npx / npm / git clone) with no
+    Homebrew promise.
+
+- **Consolidated findings table updates** (`audit-reports/2026-05-01-consolidated-findings.md`):
+  - Header line `Total rows in table: 231` → `287` (lag corrected; reconciliation note added)
+  - 9 rows OPEN → FIXED with commit hashes (DEF-2, BH-23, E1, BH-21, BH-24, BH-20, F-13, TD-31, CA-09)
+  - 1 row OPEN → DROPPED with rationale (BH-22; memo path included)
+  - 2 more rows post-triage: BH-02 + SYM-8 → FIXED (8889125) — verified `fix_measurement.py:33` already has `?mode=rw, uri=True`; EU-12 → DROPPED (LICENSE file exists)
+  - 1 row CA-08 → FIXED (working-tree-only annotation)
+  - Triage summary note appended below header (142/41/1 percentages, sub-cluster pointers, recommend SEC-* + F-* re-derivation passes before any fix)
+  - Final state: 287 rows · 181 OPEN · 58 FIXED · 32 DEFERRED · 13 INFO · 2 DROPPED · 1 BLOCKER
+
+### Removed
+- **`docs/homebrew/burnctl.rb`** + empty `docs/homebrew/` directory.
+  Why: formula was pinned to v4.0.2 (current shipping is v4.5.6 — 17 versions stale)
+  and the tap repo `pnjegan/homebrew-burnctl` was never created. README's Install
+  section already documents npx / npm / git clone with no Homebrew promise to
+  users — orphaned formula was dead code that looked live.
+  Commit `b749070`.
+
+### Architecture Decisions
+- **Memo precedent for audit-row closures that can't be tracked in git.** When a fix's
+  target is gitignored (CA-08: `CLAUDE.md`), the row's close-record location is
+  ungrounded (CA-09: `TECH_DEBT.md` has no CA-* series), or the row is dropped
+  rather than fixed (BH-22), record the closure in `audit-reports/YYYY-MM-DD-<id>-close.md`
+  (gitignored) and reference the memo path in the consolidated table's Status field.
+  Three concrete examples shipped this session.
+  Why: keeps the audit table truthful without forcing scope creep into adjacent
+  files (e.g. force-tracking `CLAUDE.md` just to record a one-line cron correction).
+  Impact: every future closure that can't land as a normal git commit follows this pattern.
+
+- **Triage as standing pre-fix step.** The audit table is a hypothesis, not ground
+  truth. Five stale-premise catches in this session (BH-22 wrong cites, CA-08
+  untrackable target, BH-23/E1 hidden loader bug, CA-09 wrong close-record location,
+  +56-row consolidated-table header lag) validated the rule that every "easy win"
+  prompt deserves a 30-60 second pre-check: does the cited file:line still match
+  current code? does the close-record location exist? does the fix assume anything
+  about adjacent code that isn't true?
+  Why: had the triage discipline not been applied, this session would likely have
+  shipped 3-5 subtly-wrong commits.
+  Impact: the 142 GREEN rows in the triage TSV are now safe to batch as future
+  fixes; the 41 YELLOW rows need re-derivation before any code change; the 1 RED
+  row was dropped on inspection.
+
+- **Bundling rule with explicit justification.** One-fix-per-commit was held except
+  for BH-23/E1 (loader-fix bundled in same commit). Bundling allowed because the
+  loader change had no standalone behavioural justification without BH-23/E1 forcing
+  the issue, and splitting would have shipped a known-broken intermediate state.
+  Commit message documents the bundling explicitly.
+  Impact: future operators have a worked example of when bundling is correct vs
+  when it's "while I'm here" scope creep.
+
+### Known Issues / Not Done
+- **BH-22 deferred.** Memo at `audit-reports/2026-05-01-bh22-revisit.md` asks for
+  re-cite of actual silent-swallow lines or full drop from consolidated table.
+  Why deferred: cited sites in `fix_generator.py` were not silent LLM-error swallows
+  on inspection. Re-investigation is a separate scope.
+
+- **41 YELLOW rows in triage need re-derivation passes.** Two cluster recommendations:
+  - **SEC-* cluster (8 rows).** Cited line numbers point at unrelated code. Premises
+    (plaintext OpenRouter + claude.ai tokens in `data/usage.db`, no auth on
+    `/api/browser-chats` POST, fixed-IV AES-CBC in cookie decryption, missing security
+    headers) are likely real exposures. Recommend a single SEC-* re-derivation session
+    before any fix attempt.
+  - **F-* cluster (8 rows, db.py + scanner.py).** UNIQUE constraint, INSERT OR IGNORE,
+    scan_state pruning, INSERT OR REPLACE — all cited lines now show different code.
+    Recommend a single F-* re-derivation session.
+  Why deferred: re-anchoring evidence in 16 stale rows is not a fix session — it is
+  an investigation session. Mixing the two would corrupt the discipline.
+
+- **Self-inflicted line drift.** Three rows had their cited lines shifted by today's
+  own commits: CORR-05 + SYM-5 (analyzer.py:1341, shifted by BH-21 TODO removal),
+  SYM-8 (fix_measurement.py:33, already URI-mode fixed). SYM-8 closed via triage;
+  CORR-05 + SYM-5 still YELLOW.
+
+- **Fix F (ROI baseline freeze, CORR-10/11).** Live evidence of $1,616 → $635 → $0
+  drift over 6 hours with zero code change. Touches `fix_tracker.py:369-392`,
+  `fix_scoreboard.py:~120`, README footnote. Coupled with `baseline_corrupted=1`
+  one-way flag. Parked for v4.7 because the right gate is 30 days of
+  `baseline_readings` accumulation + evidence from 2+ spike-baselined fixes
+  (calendar work, not code work).
+
+- **argparse migration (EU-T2).** Audit table flagged as "easy win" — it isn't.
+  Changes the user-visible surface for 16 commands at once. Deserves its own
+  framing turn.
+
+- **Brainworks 4-bug collision (CORR-01).** Only bug 3 of 4 fixed (`eb62fbf` source_path
+  guard). Bugs 1, 2, 4, 5 + existing-data migration deferred. Estimated $1-3k/month
+  attribution blind spot.
+
+- **CHANGELOG.md session-46 addendum still uncommitted in working tree.** Pre-existing
+  before this session began; not in scope for Session 47. Next session should
+  decide whether to commit standalone or bundle with the next release entry.
+
+- **`why_limit.py:413-414` docstring tightening.** Still says "(prints a one-line hint
+  to run the Mac collector)". After TD-31, the function still prints a one-line
+  empty-state but no longer references a Mac collector. Phrase passes the TD-31
+  acceptance bar (no specific filename) but is technically inaccurate. Future
+  tightening pass material; not a bug.
+
+### Session metrics
+- Commits: **8** (CA-08 + memos shipped working-tree-only by design).
+- AST checks: **8 / 8 pass**.
+- Smoke tests: **8 / 8 pass**.
+- Stale-premise catches: **5** (BH-22, CA-08, BH-23 loader bug, CA-09 location, table header lag).
+- Files touched in commits: 9 (`cli.py`, `daily_qa.py`, `analyzer.py`, `scanner.py`,
+  `db.py`, `server.py`, `why_limit.py`, `templates/dashboard.html`, `TECH_DEBT.md`,
+  `.gitignore`, `docs/homebrew/burnctl.rb` deleted).
+- Files touched in working tree only (no commit): `CLAUDE.md`, `.burnctlignore` (new).
+- audit-reports/ artefacts produced (gitignored): 1 newsletter (32 KB),
+  1 triage TSV (184 rows), 3 close memos, 2 consolidated-table backups,
+  ~13 status updates to consolidated table.
+- Daily QA after session: **18 WOW · 2 OK · 0 DOD** (exit 1 from "any OK" gate).
+  Both OKs are documented thin-data / pre-cron states, identical to 2026-04-30 baseline.
+- Working tree at session end: same modifications as session start
+  (`CHANGELOG.md` session-46 addendum, plus the new entry being committed now).
+- Total git commits this session: **8** (corrected from earlier "9" reference in
+  the session-wrap recap).
+
+
+## [2026-05-02] Session 50 — Goal-a-Day fix-batch + audit re-derivation passes
+
+### Fixed
+- CORR-09: `_detect_repeated_reads` collapsed unrelated files sharing a basename → per-path counter; basename-only output preserved (privacy guard).
+  Why: two files at different paths with the same basename were being counted together, so threshold check fired on the wrong unit.
+  Files: `waste_patterns.py:167-180` (commit `20e0559`)
+- SEC-012: `_check_origin` allowlist hardcoded port 8080 → bound-port dynamic via `_BOUND_PORT` module constant + `_allowed_origins(self)` helper, read by both `_check_origin` and `_cors_origin`.
+  Why: `bin/burnctl.js findFreePort(8080,8090)` binds dashboard to first free port; allowlist 403'd every POST/PUT/DELETE on 8081-8090 (active user-facing bug). Now covers default 8080, auto-scan 8081-8090, and explicit `--port 1-65535`.
+  Files: `server.py:65-69, 1554-1605, 1818-1822` (commit `cb94a96`)
+- F-02 (partial): scan_state UPSERTs without DELETEs accumulated 111/353 (31%) orphan rows → `_prune_orphaned_scan_state(conn, dry_run)` helper + `burnctl admin prune-scan-state [--dry-run]` CLI subcommand; live cleanup performed (orphan count 111 → 0; idempotent on re-run).
+  Why: tactical fix; hot-path integration deferred to its own fix-design session. Helper has no internal commit (caller's responsibility) so it can join a larger transaction later.
+  Files: `scanner.py:223-249`, `cli.py:2333-2353, 2402-2417` (commit `79e38f4`)
+
+### Added
+- `insights.py` debounce constants (TD-25): 5 named `DEBOUNCE_*_HOURS` constants (BUDGET=6, SESSION=12, DAILY=24, STRUCTURAL=48, WEEKLY=168) + `INSIGHT_STALE_TTL_HOURS=24`, all env-overridable. Replaced 27 hardcoded `hours=` literals across `_insight_exists_recent` callers + `_clear_stale_insights` default.
+  Why: F-04-shape pre-flight catch surfaced that the prompt's narrow "make default configurable" premise was a subset of the row's actual scope (move all 26 call-site literals to config). Full refactor under user's option (c) with named-category schema reviewed before applying.
+  Files: `insights.py:1-49 + 27 call sites` (commit `fcc7490`)
+- `audit-reports/2026-05-02-browser-handoff.md`: end-of-day handoff document. New file (no prior version existed). Captures backlog state (175 OPEN · 61 FIXED · 33 DEFERRED · 14 INFO · 1 BLOCKER · 4 DROPPED · 288 total), today's ledger, open architectural items, and 6-item lessons section.
+- `audit-reports/2026-05-02-phantom-evidence.txt`: 124-line evidence capture of the stale `/root/.burnctl/` v4.0.0 clone before deletion (Phase 6).
+
+### Removed
+- `/root/.burnctl/` directory (Apr 19 v4.0.0 install leftover; 47 files). Cleanup after Phase 6 investigation traced today's phantom DB to its old `db.py:103-105 get_conn()` (unconditional `os.makedirs` + `sqlite3.connect`).
+  Why: stale clone was creating phantom DB at `/root/.burnctl/data/usage.db` from non-canonical cwd invocations; current codebase's 14 `load_db()` / `sqlite3.connect` call sites are all either BH-02-protected or `os.path.exists`-gated and could not have been the culprit. Cleanup eliminated trigger; daily_qa returned to 19/20 WOW · 1 OK · 0 DOD post-rm.
+
+### Architecture Decisions
+- F-04 deferred (path a). Real defect is cross-batch compaction event suppression at `BATCH_FLUSH_SIZE` boundary, not a hardcoded constant. Architectural fix (per-session buffering across flushes, or re-detection at batch joins, or accept-and-document) needs its own session.
+  Impact: `BATCH_FLUSH_SIZE` env-override change was attempted, validated, then reverted because committing it as "closes F-04" would have misrepresented the closure. Pre-flight rule earned its keep here.
+- F-08 severity downgrade HIGH → LOW. `_parse_subagent_info` uses `split('/subagents/')[0]` which would return outermost UUID if `/subagents/` ever appeared multiple times in a path; latent only — Claude Code's flat sub-agent layout produces no real-data trigger.
+  Impact: would re-fire if a future Claude Code version adds nested sub-agent layouts.
+- Pre-flight rule (read row text + cited code together before drafting any fix prompt) is now load-bearing infrastructure for any fix-batch session.
+  Impact: caught 3 row-vs-premise mismatches today (F-04, TD-25 scope, CORR-09 threshold side-effect). Each catch saved a wrong commit. Cost ~30-60s per item.
+- Subagent dispatch pattern for read-only re-derivation passes. 16 subagents across two parallel batches (Phase 3: 8 SEC-*, Phase 4: 8 F-*); identical contract per row, fixed-shape verdict output, orchestrator applies edits in one pass at end of each phase. ~30 min wall-clock each instead of 60-90 min serial; 0 escalations.
+  Impact: do NOT use subagents for fix execution (one-fix-per-commit + per-fix-smoke discipline forbids it). Subagents = parallel reads, not parallel writes.
+- Re-derivation surfaced priority changes, not just citation fixes. SEC-012 went from "sleepy LOW security tightening" to "active user-facing bug" via Phase 3 re-derivation alone; Phase 4 contract added `priority_change` dimension. Keep that field in any future re-derivation contract.
+
+### Audit table reconciliation (audit-reports/2026-05-01-consolidated-findings.md)
+- 16 rows re-anchored: 8 SEC-* (Phase 3), 8 F-* (Phase 4). Pattern: ~94% premise correctness, ~6% line-cite correctness — original audit had systematic citation drift, not random errors.
+- 4 status closures: EU-12 DROPPED (LICENSE exists), AR-09 DROPPED (premise obsolete after spawn-pass-through refactor), F-09 DROPPED (premise doesn't manifest in current code), F-04 DEFERRED (architectural).
+- 1 row added: OPS-01 INFO documenting the phantom-clone find with cross-references to F-01 / BH-19 / SYM-8.
+- Counts: 184 → 175 OPEN; 56 → 61 FIXED; 32 → 33 DEFERRED; 13 → 14 INFO; 1 → 4 DROPPED; total 287 → 288.
+- Final table sha256: `fb7672ddebbca40b8226d988200052f2dab966612e1bbac2cdcf99c5366fee17`
+
+### Known Issues / Not Done
+- F-02 hot-path integration. Helper + CLI subcommand shipped; auto-prune integration (every-scan vs periodic vs on-demand) deferred for fix-design session.
+  Why deferred: the integration question has design tradeoffs that don't fit a tactical fix (race conditions if pruning during active scan; user-disruption tradeoffs if cron-prune deletes a scan_state for a path that's about to come back).
+- F-04 cross-batch compaction suppression. Architectural work; not a one-line fix.
+  Why deferred: needs per-session buffering across flushes, or re-detection at batch joins, or accept-and-document. Decision belongs in its own framing session.
+- Phantom-DB hardening. Tactical cleanup done (rm -rf the stale clone). Structural fix is the AR-01 / TD-01 DAL consolidation across all 14 `load_db()` call sites — un-protected sites are currently `os.path.exists`-gated, so they can't create phantoms today, but consolidating to a single resolver would eliminate the latent class entirely.
+  Why deferred: not in scope for today; architectural.
+- BH-17 HELP_TEXT auto-generation. Highest-risk item in original Phase 2 batch. Stayed gated all day per discipline (touches every command's user-visible help; format-drift would surface as a regression for every user).
+  Why deferred: deserves a framing pass before the next attempt. Confirmed in handoff lessons that this should not land in a count-down day.
+
+### Session shape
+- 7 phases: warmup closures → fix batch (start + resume) → SEC-* re-derivation → F-* re-derivation → SEC-012 fix → phantom DB investigation + cleanup → F-02 partial.
+- 4 commits today (`20e0559`, `fcc7490`, `cb94a96`, `79e38f4`); all pushed to `origin/main`.
+- Final daily_qa: exit 1 · 19/20 WOW · 1 OK · 0 DOD (the OK is `browser-session-health` thin-data; same as morning baseline; exit 1 is documented `daily_qa.py:854-855` behavior on any-OK).
+- HEAD: `79e38f4`.
+
+## [2026-05-04] Session 51 — SEC-001 stage 3a + two read-only investigations
+
+### Added
+- **SEC-001 stage 3a** — new `crypto.py` (AES-256-CBC + HMAC-SHA256 via openssl
+  shell-out, stdlib only, `v1:<b64>:<b64>` format) and decrypt-aware
+  `db.py:get_setting` that routes `v1:`-prefixed values through `crypto.decrypt`
+  using `BURNCTL_MASTER_KEY` from env. Legacy plaintext values pass through
+  unchanged; missing master key on a v1: row raises a labeled `RuntimeError`.
+  No on-disk data changes — reader is dual-format ready for Stage 3b.
+  Why: stage 2 shipped the master-key env injection; stage 3a is the matching
+  read path so we can write encrypted values in 3b without breaking readers.
+  Files: `crypto.py` (new, 84 lines), `db.py:1-7, 1600-1614` (commit `f712774`)
+
+### Validation
+- Round-trip encrypt(decrypt) via `python3 -c …` — OK.
+- `get_setting('dashboard_key')` ↔ direct `SELECT value FROM settings` — bytes
+  match (`79b692bf…`).
+- `/api/health` 200, version 4.5.6.
+- `python3 -m py_compile crypto.py db.py` — OK.
+- `daily_qa.py` exit 1 (18 WOW · 2 OK · 0 DOD); both OKs are pre-change baseline
+  drift (browser thin-data; researcher-staleness clock crossed 12h). No
+  regressions vs the 09:xx UTC pre-change run, confirmed by daily_qa's own
+  trend diff.
+
+### Investigations (read-only, no code)
+- **CORR-01 / DASH-005 — sub-agent "Other" bucket.** Findings written to
+  `/tmp/corr-01-investigation.md`. Headline: bug is misdiagnosed. Sub-agents
+  inherit project correctly (every sample shows `sub_project == parent_project`,
+  including a Tidify15 sub-agent that inherited Tidify). Real cause: the
+  parent's path itself doesn't keyword-match `account_projects`, so both
+  parent and sub-agent get `'Other'` at ingest. 60% of the 30-day Other-bucket
+  rows ($1,429 of $3,414) already have `inferred_project='burnctl'` populated
+  by the scanner — the dashboard's `analyzer.project_metrics()` (`analyzer.py:222-250`)
+  just isn't using the COALESCE fallback that `subagent_audit`, `overhead_audit`,
+  and `why_limit` already use. Two fix surfaces flagged: (A) add
+  `-root-projects-burnctl` keyword to `account_projects`, (B) apply the
+  `COALESCE(NULLIF(TRIM(inferred_project),''), project)` fallback in
+  `analyzer.py`. Stop-condition triggered ("partially fixed in some paths but
+  not others") — no code written.
+- **DASH-028 — chat-title sync rebuild pre-build investigation.** Findings
+  written to `/tmp/dash-028-investigation.md`. Confirmed `chat_title_sync.py`
+  was never committed in v4.4.0 (TD-31 backfill). Endpoint contract documented
+  (auth, 8 required fields, UPSERT on `chat_uuid` skips `account`/`browser`/
+  `first_visit` on conflict). Cross-platform Chrome/Vivaldi History paths
+  enumerated for Mac/Linux/Windows. Chromium-epoch trap flagged
+  (microseconds-since-1601, constant `11_644_473_600`). Architecture
+  recommendation: standalone `tools/chat_title_sync.py`, NOT absorbed into
+  `tools/mac-sync.py` (mac-sync is macOS-only by Keychain dependency; coupling
+  forces Linux/Windows users to install Mac-only collectors).
+
+### Architecture Decisions
+- **CHANGELOG.md left out of stage-3a commit by design.** The working tree
+  arrived at session start with `M CHANGELOG.md` (406-line pre-existing diff
+  containing Session 47-50 catch-up entries from prior sessions). Stage 3a
+  was committed scoped to `crypto.py + db.py` only. The Session 51 entry
+  (this one) is appended on top of the existing diff and remains unstaged
+  for human review.
+  Why: hard rule — do not ship unrelated cross-session content under a SEC-*
+  commit.
+  Impact: the next code commit should either explicitly include the
+  CHANGELOG bundle or the operator may want to land it standalone first.
+
+### Known Issues / Not Done
+- **CORR-01/DASH-005 fix not written.** Stop condition triggered on
+  partial-fix asymmetry. Operator decision needed: apply the COALESCE
+  fallback uniformly to `analyzer.project_metrics`, or leave the dashboard's
+  raw-`project` read intentionally?
+- **DASH-028 collector not built.** Investigation only; no code. Open
+  operator decision flagged: keep `/api/browser-chats` unauthenticated
+  (localhost-bind boundary), or require `X-Sync-Token` going forward.
+- **SEC-001 Stage 3b (encrypt-on-write in `set_setting`) not started.** Stage
+  3a was committed as a discrete sub-stage so each step can be rolled back
+  independently. Stage 3b is the natural next commit before Stage 4 backfill.
+- **Pre-existing 406-line CHANGELOG diff still unstaged.** Inherited from
+  prior sessions. Out of scope for Session 51.
+
+## [2026-05-05] Session 52 — pre-push gate + DASH-029 filter + handoff
+
+### Fixed
+- Recent Browser Sessions panel ignored the top-bar account selector and
+  used `first_visit > cutoff` (chats reopened today disappeared after 4
+  days even with active reuse) → now passes `?account=<currentAccount>`
+  matching the `/api/data` / `/api/insights` / `/api/projects` convention,
+  and filters on `last_visit >= cutoff`. Filter applied to both the
+  titled-rows query and the snapshot-fallback branch.
+  Why: matches the convention three other endpoints already follow, and
+  surfaces still-active chats that the previous predicate dropped.
+  Files: `server.py:933-1010`, `templates/dashboard.html:1227`
+  (commit `f5fd8a8` — local only, NOT pushed)
+
+### Added
+- **Pre-push gate executed across 4 commits** (`ece3fdb..8775e8f`). Four
+  checks ran: literal-secret scan (20 keyword matches all benign — variable
+  names, env reads, template placeholders; positive 32+ hex / 40+ base64 /
+  v1: scans all empty); `audit-reports/` ignore verification (ignored,
+  zero tracked files); working-tree state (only `M CHANGELOG.md`
+  carry-forward); branch+remote sanity (main, ahead=4, behind=0). All
+  green → `git push origin main` — origin advanced `79e38f4..8775e8f`.
+  Why: SEC-* commits were in the bundle, so the gate is non-negotiable.
+  Caught zero issues, but documenting the worked example so the protocol
+  has a known-good template.
+  Files: none touched by the gate itself.
+
+- **Handoff doc + durable memory entry** for next session start:
+  - `audit-reports/2026-05-05-handoff.md` — gitignored, 6 KB. Captures
+    repo state, SEC-001 stage table (Stage 3b is NEXT), the load-bearing
+    backup-path sequencing rule, three open operator decisions, validation
+    baselines.
+  - Memory: `project_sec_001_sequencing.md` (indexed in `MEMORY.md`) —
+    survives across sessions so a future maintainer doesn't "helpfully"
+    fix the broken backup path before Stage 5 lands.
+  Why: SEC-001 is multi-stage and the sequencing rule is easy to violate
+  without context. Pinning it in two places (project-local handoff +
+  global memory) means both `/next` and a fresh-context session pick it up.
+  Files: `audit-reports/2026-05-05-handoff.md` (gitignored),
+  `~/.claude/projects/-root-projects-burnctl/memory/project_sec_001_sequencing.md`,
+  `~/.claude/projects/-root-projects-burnctl/memory/MEMORY.md`
+
+### Architecture Decisions
+- **Push protocol = 4-check gate, no `--force` variants.** Even on
+  zero-finding runs, the literal-secret scan + audit-reports ignore check
+  + working-tree state + ahead/behind sanity is the contract for any
+  bundle that includes SEC-* commits. Worked example committed to muscle
+  memory now.
+  Impact: any future SEC stage push uses the same template; build-time
+  shortcuts are not negotiable on commits that touch crypto/secrets.
+
+- **DASH-029 stays off the SEC-001 commit chain.** Even though it shipped
+  the same day as the SEC-001 stage 3a push, it's a separate commit on
+  its own topic. Don't bundle.
+  Impact: per-track commit history is readable in `git log` without
+  cross-topic noise.
+
+- **`Personal (Pro)` tab missing in top-bar is filed mentally as DASH-030
+  (separate session).** DASH-029's account-filter branch handles
+  `account=work_pro` correctly, so the moment the missing-tab bug is
+  fixed upstream (likely in `/api/data` accounts_list emit), the filter
+  Just Works — no further wiring needed.
+  Impact: the small filter shipped today is forward-compatible with the
+  bigger upstream fix; doing them as separate sessions keeps each commit
+  tightly scoped.
+
+### Known Issues / Not Done
+- **DASH-029 not pushed.** Local commit `f5fd8a8` only. Next push window
+  would normally batch it with Stage 3b — operator preference.
+
+- **SEC-001 Stage 3b not started.** Spec is ready in
+  `audit-reports/2026-05-04-SEC-001-plan.md` (encrypt-on-write in
+  `set_setting` for `_SECRET_KEYS`). 3a's reader already handles v1:
+  format so 3b ships independently.
+  Why deferred: end of session; one-stage-per-session keeps blast radius
+  small.
+
+- **CORR-01 / DASH-005 fix surface still open.** Investigation findings
+  at `/tmp/corr-01-investigation.md` (ephemeral; rederivable). Operator
+  decision pending: apply the
+  `COALESCE(NULLIF(TRIM(inferred_project),''), project)` fallback
+  uniformly to `analyzer.project_metrics()` (matches what
+  `subagent_audit`, `overhead_audit`, `why_limit` already do)?
+
+- **DASH-028 endpoint auth gap still open.** `/api/browser-chats` is in
+  `_NO_DASH_KEY` (server.py:1059). Today's collector commit (`8775e8f`)
+  built it to send `X-Sync-Token`, but the endpoint doesn't enforce.
+  Operator decision pending: flip the endpoint, or keep localhost-only
+  contract?
+
+- **Pre-existing 482-line `M CHANGELOG.md` carry-forward.** Now includes
+  this Session 52 entry on top of Sessions 47-51 catch-ups. Across 5
+  sessions unstaged. Non-blocking; lands when operator wants to commit
+  it standalone.
+
+## [2026-05-08] Session 53 — INV2: baseline_scanner project allow-list
+
+### Added
+- `tracked_projects` setting: operator-curated allow-list for baseline CLAUDE.md scan
+  Why: closes the unfiltered-os.listdir leak in `_discover_project_roots()` that was surfacing stale projects (Tidify12, Tidify12-backup-2026-03-24, Tidify14) as `claudemd_bloat` insights every daily scan
+  Files: `baseline_scanner.py` (commit 76b9994, +140/-16)
+- New helpers `_resolve_tracked_projects()` and `_read_tracked_projects()` with explicit malformed-vs-empty branching: `[]` honored as 'scan nothing' (escape hatch), malformed JSON falls back to default scan with a warning (no crash)
+  Files: `baseline_scanner.py:108–199`
+- DB row: `settings.tracked_projects = ["Tidify15", "burnctl", "brainworks", "digivaul", "the-app", "wealth_tracker"]`
+  Files: `data/usage.db` (settings table; `updated_at` populated via `strftime('%s','now')`)
+
+### Fixed
+- `_discover_project_roots()`: resolution order now 3-tier — Tier-1 env (additive concat with Tier-3, preserves pre-INV2 behavior bit-for-bit), Tier-2 settings.tracked_projects (replaces Tier-3 when set), Tier-3 default-parent walk
+  Why: stale Tidify projects ($2,168 tokens × 3 entries) were creating recurring CLAUDE.md insights with no operator action available
+  Files: `baseline_scanner.py:200–264`
+- One-time DB cleanup: deleted 3 stale `claudemd_bloat` insights (id 2231, 2232, 2233 — emitted overnight by automated daily scan)
+  Why: Tier-2 allow-list prevents future re-emit, but existing rows would linger until line-58 TTL ages them out
+  Files: `data/usage.db` insights table; backup at `/tmp/inv2-insights-pre.sql`
+
+### Architecture Decisions
+- Tier-1 (`BURNCTL_PROJECT_ROOTS` env) kept as **additive concat** with Tier-3, NOT short-circuit
+  Why: short-circuit would silently regress existing env-var users (they currently get env paths PLUS default scan). Operator override of initial Step 2 framing.
+  Impact: any pre-INV2 deployment with env var set sees identical behavior on upgrade
+- Tier-1 + Tier-2 combine additively: env paths + settings paths (no replacement). Tier-2 only suppresses Tier-3.
+  Why: env-explicit input should always survive, even when Tier-2 is `[]` (scan nothing)
+  Impact: `env=/foo, settings=[]` → `[/foo]`; `env=/foo, settings=["bar"]` → `[/foo, ~/projects/bar]`
+- Allow-list (not exclude-list) chosen as the new-stale-dir defense
+  Why: future stale dirs (e.g. another `Tidify16-backup-...`) won't auto-leak. Operator must opt them in.
+  Impact: adding a new live project requires updating `tracked_projects` (or unsetting it to fall back to default scan)
+
+### Known Issues / Not Done
+- `76b9994` is committed but **not pushed** — operator pushes manually after review
+- Tidify15 `claudemd_bloat` insight (id 2125, 2,816 tokens) is legitimate — separate work item if operator wants the file trimmed
+- Daily QA gate (`daily_qa.py`) not invoked this session — no version bump, no `npm publish`, no `deploy.sh` (config-only behavior change, no surface bump)
+- Premise drift caught at V8.5: Step 1 inventoried ids 2042/2043/2044 but the 00:24 UTC daily scan re-emitted as 2231/2232/2233 between Step 1 and Step 5. Refreshed inventory + id+path double-pin caught it.
+- Open handoff threads from prior session NOT addressed: SCAN-INF-01 (sub-agent UPDATE clobbering), INV1 (chat_title_sync collector down), INV3 (Pro project attribution), DASH-004 (cache_read API-equiv inflation)
+
+## [2026-05-08] Session 54 — Nightly auditor cron + TD-36 npm hygiene + 4 backlog wontfixes
+
+### Fixed
+- TD-36 (commit f9bf36b): `tools/get-derived-keys.py` was leaking into npm tarball since v4.5.4 (3+ versions, ~3.7KB of unused maintainer Python on every user install). The macOS keychain helper has no embedded secrets, but had no business shipping to users.
+  Why: Standing rule "no maintainer files in tarball" was violated by a wildcard. Auditor smoke-test caught it as B4.
+  Files: package.json (`tools/*.py` glob → 4 explicit entries; version 4.5.6 → 4.5.7)
+
+### Added
+- Nightly burnctl-auditor cron at 22:00 UTC (4th autonomous job, alongside qa 00:00, researcher 23:00, checklist 23:30). Writes `audit-reports/YYYY-MM-DD-nightly-audit.md`; checklist agent reads it for the morning briefing.
+  Why: Closes the autonomous pipeline gap — auditor was the missing nightly job. Smoke test verified end-to-end (7 checks executed, NO-GO produced with 1 real blocker).
+  Files: system crontab (not git-tracked); rollback backup at `/tmp/crontab-pre-auditor-1778235091.bak`
+
+- 4 new TECH_DEBT entries (TD-34 CACHE-UNITS, TD-35 CACHE-FORMULA-DRIFT, TD-36 npm-hygiene [now resolved by f9bf36b], TD-37 auditor-check-refinement). Carry-forward in working tree for tomorrow's first commit.
+  Why: Surfaced during DASH-001 Rule #24 check + auditor smoke-test B1-B4 triage.
+  Files: TECH_DEBT.md (unstaged, +155 lines, carry-forward)
+
+- Session handoff `docs/sessions/2026-05-08.md` (241 lines)
+  Why: Reference doc for next session start. Operator pastes at top of next session.
+  Files: docs/sessions/2026-05-08.md (untracked, intentionally not committed)
+
+- Memory updates: `feedback_rule_24_evidence_pack.md` extended with auditor-as-brief-author pattern (now covers 6 of 8 investigated items as brief artifacts/false positives); `MEMORY.md` index entry rewritten.
+
+- B1-B4 triage matrix at `audit-reports/2026-05-08-auditor-blocker-triage.md`
+
+### Removed
+- (none — A2 fix replaced a glob with explicit entries; no files deleted)
+
+### Architecture Decisions
+- **Rule #24 applies to AI brief authors too.** Today's session investigated 8 items (3 backlog briefs + 4 auditor blockers + 1 cache anomaly). 6 were brief artifacts or false positives. Only B4 (TD-36) and CACHE-UNITS (TD-34) were real bugs.
+  Why: AI auditor output is no more authoritative than a human handoff brief. Live reproduction must precede fix-scoping.
+  Impact: Future auditor NO-GO outputs require Rule #24 triage before action. Tonight's 22:00 UTC fire will produce the same NO-GO until TD-37 (auditor check refinement) ships.
+
+- **TD-36 fix path: A2 (explicit allowlist) over A1 (.npmignore denylist).** Empirical V6 acceptance test failed for A1 — npm's `package.json` `files` allowlist takes precedence over `.npmignore` for explicitly-globbed paths.
+  Why: A1 didn't actually filter the file out of the tarball; A2 did. Verified via `tar -tzf` + local install.
+  Impact: Future tools/* additions require explicit `package.json` `files` array updates. Trade-off accepted for explicit-beats-implicit.
+
+- **DASH-001 closed wontfix.** Headline cache hit "100.0%" not reproducible from any live endpoint, db row, or computed path (range 61.2–98.7%, top 96.8%). Pattern matches DASH-002 / chat_title_sync Bug 2.
+
+### Known Issues / Not Done
+- TD-36 commit `f9bf36b` is **local-only**. Not pushed (standing rule #11 — operator pushes manually).
+  Why deferred: Operator's terminal push.
+
+- TECH_DEBT.md (+155 lines, TD-34/35/36/37) and inherited CHANGELOG.md M carry-forward unstaged.
+  Why deferred: Standing rule #2 — one fix per commit. TD-36 commit kept clean. Other edits ship in tomorrow's first commit.
+
+- TD-37 auditor agent check 2 + check 4 refinement not started.
+  Why deferred: Tonight's 22:00 UTC fire will reproduce the same 4 blockers; refinement scoping happens after operator reviews Day-1 actual cron output.
+
+- Tonight's nightly audit will fire NO-GO (B1-B4 same as smoke test). Acceptable noise per triage matrix; tomorrow's checklist will surface it.
+
+- npm publish + deploy.sh for v4.5.7 deferred to operator's separate decision (not all commits need immediate publish).
+
+## [2026-05-09] Session 55 — Fix F follow-up: scoreboard sort + savings-gate + ledger updates
+
+### Fixed
+- 8e106bf — `fix_scoreboard.py` SQL `ORDER BY` changed from `f.id DESC` to `COALESCE(f.applied_at, f.created_at) DESC`, so the scoreboard reflects when fixes took effect rather than insert order. Misleading comment claiming the schema has no `applied_at` column corrected (the column exists; backfill landed in commit `b63b1f6`).
+  Why: `f.id DESC` was a proxy for `created_at`; correct for current backfilled data but wrong-by-default for any future fix where `created_at` and `applied_at` diverge.
+  Files: fix_scoreboard.py (+4, -2)
+
+- 8de43b8 — `compute_delta` in `fix_tracker.py` now zeros `tokens_saved` and `api_equivalent_savings_monthly` and tags the delta with `savings_unreliable_reason="no_current_sessions"` when `current.sessions_count == 0`. Per-turn token attribution divides by `total_rows`, so an empty post-fix sessions window collapses `current.tokens_wasted_*` to 0 — making baseline-minus-current "savings" an attribution artifact, not a measured reduction. Fix #12 (WikiLoop) was rendering verdict=worsened (correct) AND $316.79/mo phantom savings (wrong) before this gate.
+  Why: `tokens_saved=1,352,873` on a worsened verdict was an internal contradiction in the rendered data.
+  Verdict logic untouched: 24f7b79's "sessions=0, waste +40% → worsened" contract preserved (`determine_verdict` unmodified, existing `test_low_sessions_waste_worsened_returns_worsened` still passes).
+  Live verification: pm2 burnctl restarted via deploy.sh (v4.5.7, exit 0); `/api/fixes` for fix #12 now returns `verdict=worsened`, `tokens_saved=0`, `api_equivalent_savings_monthly=0.0`, `savings_unreliable_reason=no_current_sessions`. Phantom savings eliminated.
+  Files: fix_tracker.py (+18); tests/test_compute_delta_savings_gate.py (+207, new file — 3 unit tests covering gate-fires, gate-absent, verdict-unaffected; 83/83 tests passing)
+
+### Added
+- e1a8dd9 — `BURNCTL-DATA-1` filed in `TECH_DEBT.md`. Tracks the data-layer root cause that 8de43b8 suppresses at the user-visible layer: `waste_events` rows persist for `session_id`s that don't appear in `sessions` for the same project/window. Reproduction: fix #12 (WikiLoop) has 7 orphan events at `detected_at=1776412123`, all with `session_id`s absent from `sessions` (most recent WikiLoop session predates the fix by ~5 days).
+  Why: `capture_baseline` runs two independent SQL queries (sessions vs waste_events) with no JOIN. When session rows are missing, attribution math collapses while waste counts persist — that's the bug 8de43b8 papered over. The underlying inconsistency needs a real fix.
+  Files: TECH_DEBT.md (+84) — three hypotheses (timing, pruning, predicate mismatch), three fix-shape candidates (scan-time drop, read-time JOIN, schema FK), explicit acceptance criterion.
+
+- 0053e6e — TECH_DEBT.md ledger update: TD-34 (CACHE-UNITS), TD-35 (CACHE-FORMULA-DRIFT), TD-37 (auditor-check-refinement) filed as new open entries; TD-36 (npm tarball leak) recorded as resolved by `f9bf36b` (acceptance verified — `npm pack --dry-run | grep get-derived-keys` returns empty).
+  Why: Carry-forward from Session 54 ("inherited CHANGELOG.md M carry-forward unstaged"). f9bf36b shipped the TD-36 fix on 2026-05-08; this commit just records the closure in the ledger. TD-34/35/37 are surfaced-but-deferred items from Session 54's Rule #24 triage.
+  Files: TECH_DEBT.md (+158)
+
+### Known Issues / Not Done
+- BURNCTL-DATA-1 root cause deferred. Investigation session still required to choose between scan-time drop, read-time JOIN, or schema FK. The savings-gate (8de43b8) suppresses the phantom-savings symptom but does not fix the orphan-events condition itself.
+  Why deferred: Standing rule — diagnostic > fix scope. Today's session was a surgical 2-commit fix loop; root-cause investigation is its own session.
+
+- TD-37 auditor check refinement still not started (carry-forward from Session 54).
+  Why deferred: Same reasoning as Session 54 — refinement scoping waits on Day-2 actual cron output.
+
+- pm2 restart via deploy.sh is local-only. No npm publish (no version bump — the savings-gate is a behavioral fix, not a version-bumping change).
+  Why: Standing rule — operator decides publish cadence separately from commits.
+
+- Diagnostic finding worth recording: original Fix F scope (ROI baseline freeze) had already mostly landed before this session. `_finalize_apply` shared between CLI (`fix_apply.py:228`) and HTTP (`server.py:1373`) writes `baseline_json` atomically; `fix_scoreboard.py:122` already passes stored `metrics_json` as `current` to `compute_delta` for point-in-time stability. Only the sort-key bug + the savings-gate were genuinely new work tonight.
