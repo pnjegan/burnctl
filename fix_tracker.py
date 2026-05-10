@@ -402,6 +402,21 @@ def compute_delta(conn, fix_id, current=None):
     per_session_saving = max(before_cps - after_cps, 0)
     api_equivalent_savings_monthly = round(per_session_saving * sessions_per_month, 2)
 
+    # Savings-gate: when the post-fix window has no sessions, per-turn
+    # token attribution in `current` collapses to 0 (avg_tokens_per_turn
+    # divides by total_rows). That makes baseline-minus-current "savings"
+    # an attribution artifact, not a real reduction. Zero out savings
+    # only — verdict is computed downstream from waste/cost pct_change
+    # and remains untouched. See BURNCTL-DATA-1 for the orphan-waste-
+    # events root cause that lets waste counts persist while session
+    # rows do not.
+    current_sessions = current.get("sessions_count", 0) or 0
+    savings_unreliable_reason = None
+    if current_sessions == 0:
+        tokens_saved = 0
+        api_equivalent_savings_monthly = 0.0
+        savings_unreliable_reason = "no_current_sessions"
+
     # Output multiplier
     if before_fpw > 0 and after_fpw > 0:
         improvement_multiplier = round(after_fpw / before_fpw, 2)
@@ -461,6 +476,9 @@ def compute_delta(conn, fix_id, current=None):
         delta["pattern_pct_change"] = round((pa - pb) / pb * 100, 1)
     else:
         delta["pattern_pct_change"] = None
+
+    if savings_unreliable_reason is not None:
+        delta["savings_unreliable_reason"] = savings_unreliable_reason
 
     verdict = determine_verdict(delta, plan_type, sessions_since)
     return delta, verdict, current
