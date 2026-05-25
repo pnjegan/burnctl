@@ -995,3 +995,27 @@ dashboard after rc.4 deployed, because its stored row was written under
 rc.3. `auto_measure_pending()` from the scan cron self-corrects within
 5 min of next scan; manual kick accelerates. Pick an approach before
 the next verdict change.
+
+### TD-38 — TD-31 reconciliation (`chat_title_sync.py` now exists and ships)
+- **Status:** open
+- **Priority:** P3 (documentation/ledger drift; no user-facing failure)
+- **Files:** `tools/chat_title_sync.py` (now exists), `TECH_DEBT.md`
+  (TD-31 entry, lines 551-583), `package.json` (`files[]` array).
+- **Context:** TD-31 was marked closed 2026-05-01 on the premise that
+  `chat_title_sync.py` "does not exist" and that its references were
+  excised (resolution path (b)). That premise no longer holds: the
+  file was created 2026-05-04 (`tools/chat_title_sync.py`, 652 lines)
+  and is shipped to npm users via `package.json` `files[]` (v4.5.7+).
+  In other words, resolution path (a) ("build and ship the Mac
+  collector") is what actually occurred, but TD-31's closure narrative
+  still describes path (b). The two are contradictory. This is also the
+  file an EDR product flagged during 2026-05 triage, so the ledger
+  should reflect reality for any future security review.
+- **Fix (pick one):** reopen TD-31 and rewrite its resolution to record
+  that the collector was built and shipped (path a), OR — if shipping
+  the collector was unintended — remove it from `files[]` and re-close
+  TD-31 under path (b). Operator decides.
+- **Acceptance:** TD-31's status and narrative match the actual state of
+  `chat_title_sync.py` (exists + shipped, or removed); no contradiction
+  between the ledger and `package.json` `files[]`.
+- **Added:** v4.5.8 (2026-05-25).
