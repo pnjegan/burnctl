@@ -210,6 +210,29 @@ def push_to_burnctl(access_token, org_id, email, usage, plan):
 
 # ─── Main ────────────────────────────────────────────────────────
 
+def _warn_if_remote_host():
+    """Warn (stderr) when BURNCTL_HOST is not local. Fail-safe: never blocks
+    non-interactive runs (cron/launchd) — only an interactive TTY gets the
+    5-second Ctrl+C abort window."""
+    host = (BURNCTL_HOST or "").strip().lower()
+    if host in ("localhost", "127.0.0.1", "::1", ""):
+        return
+    sys.stderr.write(
+        "⚠️  WARNING: BURNCTL_HOST is set to '%s' — not localhost.\n"
+        "   This means your Claude session data will be POSTED to a remote\n"
+        "   server. Only proceed if you knowingly self-host the burnctl\n"
+        "   dashboard.\n"
+        "   Press Ctrl+C within 5 seconds to abort.\n" % BURNCTL_HOST
+    )
+    if sys.stdin.isatty():
+        try:
+            time.sleep(5)
+        except KeyboardInterrupt:
+            sys.stderr.write("Aborted.\n")
+            sys.exit(130)
+    # non-interactive (cron/launchd): warn and continue (fail-safe)
+
+
 def main():
     if not SYNC_TOKEN:
         print("ERROR: SYNC_TOKEN is empty.", file=sys.stderr)
@@ -219,6 +242,8 @@ def main():
         print("", file=sys.stderr)
         print("Then edit this file and set SYNC_TOKEN at the top.", file=sys.stderr)
         sys.exit(1)
+
+    _warn_if_remote_host()
 
     sources = list(collect_credentials())
     if not sources:
