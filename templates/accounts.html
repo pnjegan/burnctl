@@ -473,6 +473,33 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   .form-grid { grid-template-columns: 1fr; }
   .meta-grid { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* Metered-overage bar — ported from dashboard.html:230-263 (v4.5.8) */
+.bar-track {
+  width: 100%;
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+.bar-fill {
+  height: 100%;
+  background: var(--accent-green);
+  border-radius: 2px;
+  transition: width 0.8s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.bar-fill.amber { background: var(--accent-amber); }
+.bar-fill.red   { background: var(--accent-red); }
+.bar-label {
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  margin: 18px 0 6px;
+}
 </style>
 </head>
 <body>
@@ -553,6 +580,12 @@ function authHeaders() {
   }
   function fmtNum(n) { return (n || 0).toLocaleString('en-US'); }
   function fmtMoney(n) { return '$' + (n || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
+  function fmtPct(n, digits) { return (n || 0).toFixed(digits == null ? 1 : digits) + '%'; }
+  function windowClass(pct) {
+    if (pct >= 80) return 'red';
+    if (pct >= 50) return 'amber';
+    return 'green';
+  }
   function timeAgo(epoch) {
     if (!epoch) return 'never';
     const diff = Math.floor(Date.now()/1000) - epoch;
@@ -670,8 +703,19 @@ function authHeaders() {
       const usage = plan === 'pro' && snap.messages_limit
         ? snap.messages_used + '/' + snap.messages_limit + ' messages'
         : (snap.pct_used || 0).toFixed(1) + '% window used';
+      let overageBar = '';
+      if (snap.extra_credits_limit > 0) {
+        // Anthropic returns extra_credits in cents (e.g. 2136 = $21.36).
+        const oUsed = snap.extra_credits_used || 0;
+        const oLim = snap.extra_credits_limit;
+        const oPct = (oUsed / oLim) * 100;
+        overageBar =
+          '<div class="bar-label" style="margin-top:10px">claude.ai overage — $' + (oUsed / 100).toFixed(2) + ' / $' + (oLim / 100).toFixed(2) + ' (' + fmtPct(oPct) + ')</div>' +
+          '<div class="bar-track"><div class="bar-fill ' + windowClass(oPct) + '" style="width:' + Math.min(oPct, 100) + '%"></div></div>';
+      }
       body =
         '<div class="browser-row"><span class="val">' + esc(usage) + '</span> · last polled ' + esc(pollAgo) + '</div>' +
+        overageBar +
         '<div class="browser-actions">' +
           '<button class="btn-ghost" data-refresh-browser="' + esc(accountId) + '">Refresh</button>' +
           '<button class="btn-danger" data-clear-session="' + esc(accountId) + '">Remove session</button>' +
