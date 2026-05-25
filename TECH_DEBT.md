@@ -1019,3 +1019,28 @@ the next verdict change.
   `chat_title_sync.py` (exists + shipped, or removed); no contradiction
   between the ledger and `package.json` `files[]`.
 - **Added:** v4.5.8 (2026-05-25).
+
+### TD-39 — `daily_qa.py` false-positives in the VPS sandbox
+- **Status:** open
+- **Priority:** P2
+- **Files:** `daily_qa.py`, possibly `qa-reports/` schema.
+- **Context:** `daily_qa.py` exits 2 on a clean release because 15 npx
+  commands (`audit`, `daily`, `resume-audit`, `peak-hours`,
+  `version-check`, `variance`, `subagent-audit`, `overhead-audit`,
+  `compact-audit`, `fix-scoreboard`, `work-timeline` ×2,
+  `claudemd-audit`, `mcp-audit`, `why-limit`) crash with exit 1 in the
+  VPS sandbox, where npm-registry access for `npx burnctl@latest` is
+  unavailable. This has been pre-existing as of at least 2026-05-24:
+  the v4.5.7 baseline (`qa-reports/2026-05-24-18.md`) shows the same 15
+  DOD (`4 WOW · 1 OK · 15 DOD`). The gate cannot distinguish a real
+  "release defect" from a "sandbox network limit", forcing a manual
+  waiver on every release — which erodes the gate's value.
+- **Fix (pick one):** (a) detect the sandbox (no registry) and skip
+  npx-dependent checks with an explicit SKIP status; (b) test the local
+  install path (`npm pack` → install the tarball) instead of
+  `npx burnctl@latest`; or (c) split checks into "blocking" vs
+  "advisory" so environmental noise downgrades to advisory.
+- **Acceptance:** a clean release on a network-isolated host produces a
+  gate result that is not a false DOD — either a clean exit or an
+  explicit SKIP that does not force exit 2.
+- **Added:** v4.5.8 (2026-05-25).
