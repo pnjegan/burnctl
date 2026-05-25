@@ -179,7 +179,7 @@ If you also use claude.ai in a browser (separate from Claude Code) and want that
 The recommended cross-platform option is `tools/oauth_sync.py`. It uses Claude Code's existing OAuth access token — not scraped browser cookies — and works on macOS, Linux, and (untested) Windows:
 
 ```bash
-# On your laptop, edit VPS_IP and SYNC_TOKEN at the top of the file, then:
+# On your laptop, set BURNCTL_HOST (or edit the default) and SYNC_TOKEN, then:
 python3 tools/oauth_sync.py
 ```
 
@@ -312,8 +312,9 @@ Confirm the path with `ls /mnt/c/Users/`.
 
 **Upgrading from `@jeganwrites/claudash` 3.x**
 - Existing DB at `data/usage.db` keeps working unchanged
-- Env vars: `BURNCTL_VPS_IP`, `BURNCTL_VPS_PORT`, `BURNCTL_BACKUP_DIR`
-  (legacy `CLAUDASH_*` variants still honored)
+- Env vars: `BURNCTL_HOST`, `BURNCTL_PORT`, `BURNCTL_BACKUP_DIR`
+  (legacy `BURNCTL_VPS_IP` / `BURNCTL_VPS_PORT` and `CLAUDASH_*`
+  variants still honored)
 - `/tmp/claudash.pid` → `/tmp/burnctl.pid` — kill the old daemon if it's still running
 - MCP server key in `~/.claude/settings.json` renames from `"claudash"` to `"burnctl"`
 - Backup default path stays `/root/backups/claudash` so existing rclone offsite
