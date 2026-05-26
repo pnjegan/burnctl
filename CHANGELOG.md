@@ -25,6 +25,13 @@
   `YOUR_HOST`).
   Files: `config.py`, `cli.py`, `tools/mac-sync.py`,
   `tools/oauth_sync.py`, `README.md`.
+- Moved `tools/chat_title_sync.py` → `tools/legacy/chat_title_sync.py`
+  and removed from npm `files[]`. SentinelOne and similar EDRs flag the
+  "copy locked browser SQLite DB" pattern regardless of intent;
+  Approved-by-Admin status is per-event, not persistent on managed
+  endpoints. File remains in repo for non-managed-endpoint users who
+  want to run it directly from a clone. v5.0 will introduce a Chrome
+  extension as the EDR-safe replacement (TD-42).
 
 ### Added
 - **Non-localhost startup warning (`tools/mac-sync.py`,
@@ -53,6 +60,10 @@
   excised" closure. Reopen or rewrite TD-31's resolution narrative
   (P3). Note: the overage on accounts panel completes the sister site
   that v4.5.6's TD-29 resolution missed.
+- **TD-41 filed** — `oauth_sync.py` ToS audit needed before broad
+  rollout (P1).
+- **TD-42 filed** — v5.0 Chrome extension to replace the chat title
+  source (P2).
 
 ## [2026-04-30] Session 46 — v4.5.6 — metered overage + snapshot-fallback browser activity
 

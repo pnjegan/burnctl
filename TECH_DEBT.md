@@ -1044,3 +1044,45 @@ the next verdict change.
   gate result that is not a false DOD — either a clean exit or an
   explicit SKIP that does not force exit 2.
 - **Added:** v4.5.8 (2026-05-25).
+
+### TD-41 — `oauth_sync.py` / `mac-sync.py` ToS audit before broad rollout
+- **Status:** open
+- **Priority:** P1
+- **Context:** Anthropic Consumer Terms Section 3.7 (unchanged since
+  Feb 2024) restricts OAuth token use to "Claude Code and Claude.ai
+  only." January 2026 enforcement banned tools like OpenClaw/OpenCode
+  that routed Pro/Max OAuth tokens through third-party clients.
+  burnctl's `oauth_sync.py` reads `~/.claude/.credentials.json` and
+  calls `/api/account` + `/api/organizations/{org_id}/usage` with the
+  user's Claude Code OAuth token. Arguably in scope (reading own
+  usage), arguably not (third-party tool routing). Audit needed before
+  sharing burnctl with colleagues at scale — single-user is likely
+  fine, multi-user rollout risks ToS enforcement.
+- **Files:** `tools/oauth_sync.py`, `oauth_lookup.py`, `tools/mac-sync.py`
+- **Resolution paths:**
+  a) Confirm acceptable use with Anthropic legal/policy
+  b) Migrate to user-pasted usage data (no token reuse)
+  c) Restrict to single-user / personal deployment only
+  d) Accept risk for limited rollout
+- **Added:** v4.5.8 (2026-05-25).
+
+### TD-42 — v5.0 Chrome extension for chat title tracking
+- **Status:** open
+- **Priority:** P2
+- **Context:** `chat_title_sync.py` is removed from the npm tarball in
+  v4.5.8 (TD-38 effectively closed by removal, not refactor). The
+  killer feature (per-conversation token attribution) must come back
+  via an EDR-safe + ToS-safe path. Architecture decided: a Chrome
+  extension that reads `document.title` on claude.ai pages and POSTs
+  to the localhost burnctl dashboard via a shared connection token.
+- **Files (new):** `extension/manifest.json`,
+  `extension/content_script.js`, `extension/background.js`,
+  `extension/popup.html`, `extension/popup.js`, `extension/icons/`
+- **Files (changed):** `server.py` (new `/api/extension-titles` +
+  `/api/extension-token` endpoints), `db.py` (new
+  `extension_connections` table), `templates/dashboard.html` (new
+  `/settings/extension` UI)
+- **Plan:** 3 CC sessions (dashboard, extension scaffold, integration)
+  + Chrome Web Store submission. Developer-mode testing first, Web
+  Store submission after end-to-end works.
+- **Added:** v4.5.8 (2026-05-25).
