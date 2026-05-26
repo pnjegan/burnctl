@@ -1086,3 +1086,32 @@ the next verdict change.
   + Chrome Web Store submission. Developer-mode testing first, Web
   Store submission after end-to-end works.
 - **Added:** v4.5.8 (2026-05-25).
+
+### TD-43 — Auto-detect project ownership (personal vs work/enterprise)
+- **Status:** open
+- **Priority:** P1 (blocks single-Mac multi-context users from getting
+  useful per-context dashboards)
+- **Context:** A single Mac may have multiple Claude Code OAuth accounts
+  in rotation (e.g. personal Max account + Confluent-issued Max/Team
+  OAuth). Today burnctl groups all sessions under one account and one
+  bucket ("Other"). For users wanting to see Confluent-only vs
+  personal-only views, manual maintained project-name lists are
+  fragile. Better: detect OAuth subscription type at scan time and
+  auto-tag sessions by tier. Heuristic — Enterprise/Team plan =
+  work/company; Pro/Max = personal. User can override.
+- **Design questions:**
+  a) Does JSONL contain OAuth subscription metadata? Earlier audit
+     showed keys (`parentUuid`, `isSidechain`, `userType`, `cwd`,
+     `sessionId`, `version`, `gitBranch`, `agentId`, `slug`, `type`) —
+     no clear plan field.
+  b) If not, can `~/.claude/.credentials.json` `subscriptionType` be
+     captured at scan time and attached to subsequent sessions?
+  c) Multi-OAuth detection: if user runs two terminals with two OAuths
+     in the same `~/.claude/` dir, can we distinguish at all?
+  d) Fallback: user-driven tagging UI in dashboard for sessions where
+     auto-detection fails.
+- **Files (likely):** `scanner.py`, `db.py` (new tag column on
+  `sessions`), `server.py` (new tagging endpoint), `templates/`
+  (filter UI)
+- **Plan:** v4.6 release. 2-3 CC sessions estimated.
+- **Added:** v4.5.8 (2026-05-26).
