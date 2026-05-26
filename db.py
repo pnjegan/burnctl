@@ -447,6 +447,98 @@ def init_db():
         if not _column_exists(conn, "claude_ai_snapshots", col):
             conn.execute(f"ALTER TABLE claude_ai_snapshots ADD COLUMN {col} {typedef}")
 
+    # ─── v5.0 — Chrome-extension ingest architecture (Session 1) ───
+    conn.executescript("""
+        -- Per-extension auth credential. Raw token shown once at /connect;
+        -- only sha256(token) stored here. revoked_at NULL = active.
+        CREATE TABLE IF NOT EXISTS extension_connections (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            token_hash       TEXT UNIQUE NOT NULL,
+            connection_label TEXT,
+            created_at       INTEGER NOT NULL,
+            last_seen_at     INTEGER,
+            revoked_at       INTEGER
+        );
+
+        -- One row per claude.ai message sample pushed by the extension.
+        -- account_id nullable: auto-attached when account_email maps to a
+        -- known account (via account_emails), else NULL until reconciled.
+        -- message_uuid gives idempotent batch insert (ON CONFLICT DO NOTHING).
+        CREATE TABLE IF NOT EXISTS browser_samples (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            connection_id   INTEGER REFERENCES extension_connections(id),
+            message_uuid    TEXT UNIQUE,
+            chat_uuid       TEXT NOT NULL,
+            account_email   TEXT,
+            account_id      TEXT,
+            user_override_account_id TEXT,
+            role            TEXT,
+            model           TEXT,
+            input_chars     INTEGER DEFAULT 0,
+            output_chars    INTEGER DEFAULT 0,
+            cost_usd        REAL,
+            timestamp       INTEGER NOT NULL,
+            date_local      TEXT NOT NULL,
+            received_at     INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_bs_account   ON browser_samples(account_id);
+        CREATE INDEX IF NOT EXISTS idx_bs_email     ON browser_samples(account_email);
+        CREATE INDEX IF NOT EXISTS idx_bs_chat_date ON browser_samples(chat_uuid, date_local);
+        CREATE INDEX IF NOT EXISTS idx_bs_conn      ON browser_samples(connection_id);
+        CREATE INDEX IF NOT EXISTS idx_bs_date      ON browser_samples(date_local);
+
+        -- Nightly rollup target. One row per (chat_uuid, date_local).
+        -- account_id = effective account after override propagation.
+        CREATE TABLE IF NOT EXISTS browser_chat_daily (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            date_local    TEXT NOT NULL,
+            chat_uuid     TEXT NOT NULL,
+            account_id    TEXT,
+            account_email TEXT,
+            sample_count  INTEGER DEFAULT 0,
+            input_chars   INTEGER DEFAULT 0,
+            output_chars  INTEGER DEFAULT 0,
+            cost_usd      REAL,
+            first_ts      INTEGER,
+            last_ts       INTEGER,
+            model         TEXT,
+            rolled_up_at  INTEGER NOT NULL,
+            UNIQUE(chat_uuid, date_local)
+        );
+        CREATE INDEX IF NOT EXISTS idx_bcd_account_date ON browser_chat_daily(account_id, date_local);
+        CREATE INDEX IF NOT EXISTS idx_bcd_date         ON browser_chat_daily(date_local);
+
+        -- email→account mapping. Many emails per account (personal + work
+        -- aliases). Reconcile 'merge' inserts a row here; auto-attach reads it.
+        CREATE TABLE IF NOT EXISTS account_emails (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id  TEXT NOT NULL,
+            email       TEXT UNIQUE NOT NULL,
+            is_primary  INTEGER DEFAULT 0,
+            created_at  INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_ae_account ON account_emails(account_id);
+
+        -- account_emails the user chose to ignore during reconciliation,
+        -- so they stop surfacing in the unreconciled banner.
+        CREATE TABLE IF NOT EXISTS account_ignore_list (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_email TEXT UNIQUE NOT NULL,
+            reason        TEXT,
+            created_at    INTEGER NOT NULL
+        );
+    """)
+
+    # --- v5.0 migration: new columns on accounts (coexist with label/active) ---
+    for col, typedef in [
+        ("source",        "TEXT DEFAULT 'manual'"),  # manual|config|reconciled|auto
+        ("auto_tag",      "INTEGER DEFAULT 0"),       # auto-attach future samples by email
+        ("display_label", "TEXT"),                    # friendly name (alongside `label`)
+        ("archived_at",   "INTEGER"),                 # soft-delete ts (alongside `active`)
+    ]:
+        if not _column_exists(conn, "accounts", col):
+            conn.execute(f"ALTER TABLE accounts ADD COLUMN {col} {typedef}")
+
     # --- Settings table ---
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS settings (
