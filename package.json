@@ -48,6 +48,7 @@
     "claudemd_audit.py",
     "compact_audit.py",
     "config.py",
+    "crypto.py",
     "daily_qa.py",
     "daily_report.py",
     "db.py",

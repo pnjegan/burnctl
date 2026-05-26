@@ -53,6 +53,13 @@
   the `BURNCTL_HOST` / `BURNCTL_PORT` env-precedence chain (the project
   ships zero pip deps, so tests run under `python3 -m unittest`).
 
+### Fixed
+- Added `crypto.py` to `package.json` `files[]` — this file has been
+  missing from npm tarballs since v4.5.0 (introduced May 4 by
+  `f712774`, "SEC-001 stage 3a"), causing `ModuleNotFoundError: No
+  module named 'crypto'` on every `npm install -g burnctl` followed by
+  `burnctl scan`. Files: `package.json`.
+
 ### TD ledger
 - **TD-38 filed** — TD-31 reconciliation: `chat_title_sync.py` was
   created 2026-05-04 and ships in `package.json` `files[]`,
