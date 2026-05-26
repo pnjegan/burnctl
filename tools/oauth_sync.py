@@ -15,8 +15,9 @@ Usage:
   1. On your burnctl server:
        python3 cli.py keys
      Copy the sync_token value.
-  2. Edit this file, set SYNC_TOKEN to that value, and VPS_IP to your
-     server (or "localhost" if you SSH-tunnel).
+  2. Edit this file, set SYNC_TOKEN to that value. Set BURNCTL_HOST
+     (env or below) to your dashboard host, or leave it "localhost"
+     if you run on the same machine / SSH-tunnel.
   3. Run:
        python3 oauth_sync.py
   4. Add to cron for automatic syncing:
@@ -41,9 +42,13 @@ from oauth_lookup import fetch_account, _bearer_request  # noqa: E402
 
 
 # ─── Configuration ───────────────────────────────────────────────
-# Edit these three values.
-VPS_IP = "localhost"
-VPS_PORT = 8080
+# Edit SYNC_TOKEN. BURNCTL_HOST defaults to "localhost"; set it (or the
+# legacy BURNCTL_VPS_IP / CLAUDASH_VPS_IP) in the environment to point
+# at a self-hosted dashboard.
+BURNCTL_HOST = (os.environ.get("BURNCTL_HOST") or os.environ.get("BURNCTL_VPS_IP")
+                or os.environ.get("CLAUDASH_VPS_IP") or "localhost")
+BURNCTL_PORT = int(os.environ.get("BURNCTL_PORT") or os.environ.get("BURNCTL_VPS_PORT")
+                   or "8080")
 SYNC_TOKEN = ""
 
 # Where Claude Code stores credentials. First hit wins per file; the
@@ -175,7 +180,7 @@ def fetch_usage(access_token, org_id):
 # ─── Push to burnctl server ─────────────────────────────────────
 
 def push_to_burnctl(access_token, org_id, email, usage, plan):
-    url = f"http://{VPS_IP}:{VPS_PORT}/api/claude-ai/sync"
+    url = f"http://{BURNCTL_HOST}:{BURNCTL_PORT}/api/claude-ai/sync"
     payload = {
         "session_key": access_token,  # stored verbatim on the server
         "org_id": org_id,
@@ -205,6 +210,29 @@ def push_to_burnctl(access_token, org_id, email, usage, plan):
 
 # ─── Main ────────────────────────────────────────────────────────
 
+def _warn_if_remote_host():
+    """Warn (stderr) when BURNCTL_HOST is not local. Fail-safe: never blocks
+    non-interactive runs (cron/launchd) — only an interactive TTY gets the
+    5-second Ctrl+C abort window."""
+    host = (BURNCTL_HOST or "").strip().lower()
+    if host in ("localhost", "127.0.0.1", "::1", ""):
+        return
+    sys.stderr.write(
+        "⚠️  WARNING: BURNCTL_HOST is set to '%s' — not localhost.\n"
+        "   This means your Claude session data will be POSTED to a remote\n"
+        "   server. Only proceed if you knowingly self-host the burnctl\n"
+        "   dashboard.\n"
+        "   Press Ctrl+C within 5 seconds to abort.\n" % BURNCTL_HOST
+    )
+    if sys.stdin.isatty():
+        try:
+            time.sleep(5)
+        except KeyboardInterrupt:
+            sys.stderr.write("Aborted.\n")
+            sys.exit(130)
+    # non-interactive (cron/launchd): warn and continue (fail-safe)
+
+
 def main():
     if not SYNC_TOKEN:
         print("ERROR: SYNC_TOKEN is empty.", file=sys.stderr)
@@ -214,6 +242,8 @@ def main():
         print("", file=sys.stderr)
         print("Then edit this file and set SYNC_TOKEN at the top.", file=sys.stderr)
         sys.exit(1)
+
+    _warn_if_remote_host()
 
     sources = list(collect_credentials())
     if not sources:

@@ -1,5 +1,77 @@
 # burnctl — Changelog (continued from claudash v3.x)
 
+## [2026-05-25] Session 56 — v4.5.8 — Local-first naming + overage on accounts panel
+
+### Highlights
+- Renames the `VPS_*` configuration surface to `BURNCTL_*` so the
+  collectors' names match their already local-first behavior. An EDR
+  product flagged the package partly on VPS/push naming that read like
+  an infostealer; the behavior was localhost-default already, the names
+  lied about it. No behavior change for the default localhost path.
+- The browser-account host is now env-configurable (`BURNCTL_HOST` /
+  `BURNCTL_PORT`), and both collectors warn before POSTing session
+  data to a non-localhost host.
+- The metered-overage bar now also renders on the `/accounts` panel,
+  matching the dashboard.
+
+### Changed
+- **`VPS_IP` → `BURNCTL_HOST`, `VPS_PORT` → `BURNCTL_PORT`**, and
+  `_push_to_vps` → `_push_to_dashboard` (`tools/mac-sync.py`). Env
+  resolution chain: `BURNCTL_HOST > BURNCTL_VPS_IP > CLAUDASH_VPS_IP >
+  localhost` (and the `_PORT` analogue). Legacy env names still
+  honored. Default behavior unchanged for existing users (localhost).
+  Also dropped a dead `.format(vps_ip=...)` call at the CLI help
+  output and reworded the headless/self-host banner (`YOUR_VPS_IP` →
+  `YOUR_HOST`).
+  Files: `config.py`, `cli.py`, `tools/mac-sync.py`,
+  `tools/oauth_sync.py`, `README.md`.
+- Moved `tools/chat_title_sync.py` → `tools/legacy/chat_title_sync.py`
+  and removed from npm `files[]`. SentinelOne and similar EDRs flag the
+  "copy locked browser SQLite DB" pattern regardless of intent;
+  Approved-by-Admin status is per-event, not persistent on managed
+  endpoints. File remains in repo for non-managed-endpoint users who
+  want to run it directly from a clone. v5.0 will introduce a Chrome
+  extension as the EDR-safe replacement (TD-42).
+
+### Added
+- **Non-localhost startup warning (`tools/mac-sync.py`,
+  `tools/oauth_sync.py`).** `_warn_if_remote_host()` writes a stderr
+  warning when `BURNCTL_HOST` is not in {localhost, 127.0.0.1, ::1,
+  blank}. An interactive TTY gets a 5-second Ctrl+C abort window;
+  non-interactive runs (cron/launchd) warn and continue (fail-safe,
+  never blocks). stderr-only — does not pollute the stdout that
+  `sync-daemon.py` parses. The two helpers are byte-identical.
+- **Metered overage on the accounts panel
+  (`templates/accounts.html`).** Ports the overage bar from
+  `dashboard.html:1156-1165` into `renderBrowser`, with the
+  `.bar-track` / `.bar-fill` / `.bar-label` CSS and `fmtPct` /
+  `windowClass` helpers copied verbatim from the dashboard (CSS bodies
+  hash-identical). Same gate (`extra_credits_limit > 0`) and cents
+  math; only the snapshot binding differs (`snap` vs `ba.snapshot`).
+  Files: `templates/accounts.html`.
+- **`tests/test_host_config.py`** — 8 stdlib `unittest` assertions for
+  the `BURNCTL_HOST` / `BURNCTL_PORT` env-precedence chain (the project
+  ships zero pip deps, so tests run under `python3 -m unittest`).
+
+### Fixed
+- Added `crypto.py` to `package.json` `files[]` — this file has been
+  missing from npm tarballs since v4.5.0 (introduced May 4 by
+  `f712774`, "SEC-001 stage 3a"), causing `ModuleNotFoundError: No
+  module named 'crypto'` on every `npm install -g burnctl` followed by
+  `burnctl scan`. Files: `package.json`.
+
+### TD ledger
+- **TD-38 filed** — TD-31 reconciliation: `chat_title_sync.py` was
+  created 2026-05-04 and ships in `package.json` `files[]`,
+  contradicting TD-31's 2026-05-01 "does not exist / references
+  excised" closure. Reopen or rewrite TD-31's resolution narrative
+  (P3). Note: the overage on accounts panel completes the sister site
+  that v4.5.6's TD-29 resolution missed.
+- **TD-41 filed** — `oauth_sync.py` ToS audit needed before broad
+  rollout (P1).
+- **TD-42 filed** — v5.0 Chrome extension to replace the chat title
+  source (P2).
+
 ## [2026-04-30] Session 46 — v4.5.6 — metered overage + snapshot-fallback browser activity
 
 ### Highlights

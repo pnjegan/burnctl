@@ -15,8 +15,8 @@ Setup:
        curl http://localhost:8080/tools/mac-sync.py -o mac-sync.py
      The file is served WITHOUT the sync token pre-filled (by design — it
      used to be injected server-side, which leaked the token to any caller).
-  2. Retrieve your sync token on the server:
-       ssh user@YOUR_VPS_IP
+  2. Retrieve your sync token on the dashboard host:
+       ssh user@YOUR_HOST
        cd ~/burnctl
        python3 cli.py claude-ai --sync-token
   3. Paste the token into SYNC_TOKEN below.
@@ -31,15 +31,20 @@ import ssl
 import subprocess
 import sys
 import tempfile
+import time
 import hashlib
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
 # ── Configuration ──
-# Set VPS_IP to your burnctl server's IP, or "localhost" if you're running
-# via SSH tunnel (ssh -L 8080:localhost:8080 user@your-server).
-VPS_IP = "localhost"
-VPS_PORT = 8080
+# BURNCTL_HOST is the burnctl dashboard host. Defaults to "localhost".
+# Set it (or the legacy BURNCTL_VPS_IP / CLAUDASH_VPS_IP) in the
+# environment to point at a self-hosted dashboard reached over an SSH
+# tunnel (ssh -L 8080:localhost:8080 user@your-host).
+BURNCTL_HOST = (os.environ.get("BURNCTL_HOST") or os.environ.get("BURNCTL_VPS_IP")
+                or os.environ.get("CLAUDASH_VPS_IP") or "localhost")
+BURNCTL_PORT = int(os.environ.get("BURNCTL_PORT") or os.environ.get("BURNCTL_VPS_PORT")
+                   or "8080")
 SYNC_TOKEN = ""
 
 # Browser configs: (name, cookie_db_path_suffix, keychain_service, keychain_account)
@@ -52,20 +57,45 @@ CLAUDE_DOMAIN = ".claude.ai"
 COOKIE_NAME = "sessionKey"
 
 
+def _warn_if_remote_host():
+    """Warn (stderr) when BURNCTL_HOST is not local. Fail-safe: never blocks
+    non-interactive runs (cron/launchd) — only an interactive TTY gets the
+    5-second Ctrl+C abort window."""
+    host = (BURNCTL_HOST or "").strip().lower()
+    if host in ("localhost", "127.0.0.1", "::1", ""):
+        return
+    sys.stderr.write(
+        "⚠️  WARNING: BURNCTL_HOST is set to '%s' — not localhost.\n"
+        "   This means your Claude session data will be POSTED to a remote\n"
+        "   server. Only proceed if you knowingly self-host the burnctl\n"
+        "   dashboard.\n"
+        "   Press Ctrl+C within 5 seconds to abort.\n" % BURNCTL_HOST
+    )
+    if sys.stdin.isatty():
+        try:
+            time.sleep(5)
+        except KeyboardInterrupt:
+            sys.stderr.write("Aborted.\n")
+            sys.exit(130)
+    # non-interactive (cron/launchd): warn and continue (fail-safe)
+
+
 def main():
     if not SYNC_TOKEN:
         print("ERROR: SYNC_TOKEN is empty.", file=sys.stderr)
         print("", file=sys.stderr)
         print("To fix:", file=sys.stderr)
-        print("  1. On your VPS, run: python3 cli.py claude-ai --sync-token", file=sys.stderr)
+        print("  1. On your dashboard host, run: python3 cli.py claude-ai --sync-token", file=sys.stderr)
         print("  2. Paste the token into the SYNC_TOKEN variable at the top of this file", file=sys.stderr)
-        print("  3. Or re-download from: http://{}:{}/tools/mac-sync.py".format(VPS_IP, VPS_PORT), file=sys.stderr)
+        print("  3. Or re-download from: http://{}:{}/tools/mac-sync.py".format(BURNCTL_HOST, BURNCTL_PORT), file=sys.stderr)
         sys.exit(1)
 
     if sys.platform != "darwin":
         print("ERROR: mac-sync.py requires macOS (uses macOS Keychain for cookie decryption)", file=sys.stderr)
         print("For Claude Code users on any platform, use tools/oauth_sync.py instead", file=sys.stderr)
         sys.exit(1)
+
+    _warn_if_remote_host()
 
     app_support = os.path.expanduser("~/Library/Application Support")
     pushed = 0
@@ -103,7 +133,7 @@ def main():
             print(f"{browser_name}: {email} ({plan}) — could not fetch usage (pushing session only)")
 
         # Push session key + usage data to VPS
-        ok = _push_to_vps(session_key, org_id, browser_name, email, usage)
+        ok = _push_to_dashboard(session_key, org_id, browser_name, email, usage)
         if ok:
             print(f"{browser_name}: {email} ({plan}) -> pushed OK")
             pushed += 1
@@ -334,9 +364,9 @@ def _fetch_usage(session_key, org_id, plan):
     }
 
 
-def _push_to_vps(session_key, org_id, browser, account_hint, usage):
-    """Push session key + usage data to VPS dashboard sync endpoint."""
-    url = f"http://{VPS_IP}:{VPS_PORT}/api/claude-ai/sync"
+def _push_to_dashboard(session_key, org_id, browser, account_hint, usage):
+    """Push session key + usage data to the burnctl dashboard sync endpoint."""
+    url = f"http://{BURNCTL_HOST}:{BURNCTL_PORT}/api/claude-ai/sync"
     payload = {
         "session_key": session_key,
         "org_id": org_id,
@@ -365,7 +395,7 @@ def _push_to_vps(session_key, org_id, browser, account_hint, usage):
             print(f"  Sync error: HTTP {e.code}", file=sys.stderr)
         return False
     except (URLError, OSError) as e:
-        print(f"  Cannot reach VPS at {VPS_IP}:{VPS_PORT}: {e}", file=sys.stderr)
+        print(f"  Cannot reach burnctl dashboard at {BURNCTL_HOST}:{BURNCTL_PORT}: {e}", file=sys.stderr)
         return False
 
 
@@ -379,7 +409,7 @@ if __name__ == "__main__":
 # (that used to leak the token to anyone who hit /tools/mac-sync.py).
 #
 # To get your token:
-#   ssh user@YOUR_VPS_IP
+#   ssh user@YOUR_HOST
 #   cd ~/burnctl
 #   python3 cli.py claude-ai --sync-token
 #

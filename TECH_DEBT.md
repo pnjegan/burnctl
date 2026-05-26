@@ -995,3 +995,123 @@ dashboard after rc.4 deployed, because its stored row was written under
 rc.3. `auto_measure_pending()` from the scan cron self-corrects within
 5 min of next scan; manual kick accelerates. Pick an approach before
 the next verdict change.
+
+### TD-38 — TD-31 reconciliation (`chat_title_sync.py` now exists and ships)
+- **Status:** open
+- **Priority:** P3 (documentation/ledger drift; no user-facing failure)
+- **Files:** `tools/chat_title_sync.py` (now exists), `TECH_DEBT.md`
+  (TD-31 entry, lines 551-583), `package.json` (`files[]` array).
+- **Context:** TD-31 was marked closed 2026-05-01 on the premise that
+  `chat_title_sync.py` "does not exist" and that its references were
+  excised (resolution path (b)). That premise no longer holds: the
+  file was created 2026-05-04 (`tools/chat_title_sync.py`, 652 lines)
+  and is shipped to npm users via `package.json` `files[]` (v4.5.7+).
+  In other words, resolution path (a) ("build and ship the Mac
+  collector") is what actually occurred, but TD-31's closure narrative
+  still describes path (b). The two are contradictory. This is also the
+  file an EDR product flagged during 2026-05 triage, so the ledger
+  should reflect reality for any future security review.
+- **Fix (pick one):** reopen TD-31 and rewrite its resolution to record
+  that the collector was built and shipped (path a), OR — if shipping
+  the collector was unintended — remove it from `files[]` and re-close
+  TD-31 under path (b). Operator decides.
+- **Acceptance:** TD-31's status and narrative match the actual state of
+  `chat_title_sync.py` (exists + shipped, or removed); no contradiction
+  between the ledger and `package.json` `files[]`.
+- **Added:** v4.5.8 (2026-05-25).
+
+### TD-39 — `daily_qa.py` false-positives in the VPS sandbox
+- **Status:** open
+- **Priority:** P2
+- **Files:** `daily_qa.py`, possibly `qa-reports/` schema.
+- **Context:** `daily_qa.py` exits 2 on a clean release because 15 npx
+  commands (`audit`, `daily`, `resume-audit`, `peak-hours`,
+  `version-check`, `variance`, `subagent-audit`, `overhead-audit`,
+  `compact-audit`, `fix-scoreboard`, `work-timeline` ×2,
+  `claudemd-audit`, `mcp-audit`, `why-limit`) crash with exit 1 in the
+  VPS sandbox, where npm-registry access for `npx burnctl@latest` is
+  unavailable. This has been pre-existing as of at least 2026-05-24:
+  the v4.5.7 baseline (`qa-reports/2026-05-24-18.md`) shows the same 15
+  DOD (`4 WOW · 1 OK · 15 DOD`). The gate cannot distinguish a real
+  "release defect" from a "sandbox network limit", forcing a manual
+  waiver on every release — which erodes the gate's value.
+- **Fix (pick one):** (a) detect the sandbox (no registry) and skip
+  npx-dependent checks with an explicit SKIP status; (b) test the local
+  install path (`npm pack` → install the tarball) instead of
+  `npx burnctl@latest`; or (c) split checks into "blocking" vs
+  "advisory" so environmental noise downgrades to advisory.
+- **Acceptance:** a clean release on a network-isolated host produces a
+  gate result that is not a false DOD — either a clean exit or an
+  explicit SKIP that does not force exit 2.
+- **Added:** v4.5.8 (2026-05-25).
+
+### TD-41 — `oauth_sync.py` / `mac-sync.py` ToS audit before broad rollout
+- **Status:** open
+- **Priority:** P1
+- **Context:** Anthropic Consumer Terms Section 3.7 (unchanged since
+  Feb 2024) restricts OAuth token use to "Claude Code and Claude.ai
+  only." January 2026 enforcement banned tools like OpenClaw/OpenCode
+  that routed Pro/Max OAuth tokens through third-party clients.
+  burnctl's `oauth_sync.py` reads `~/.claude/.credentials.json` and
+  calls `/api/account` + `/api/organizations/{org_id}/usage` with the
+  user's Claude Code OAuth token. Arguably in scope (reading own
+  usage), arguably not (third-party tool routing). Audit needed before
+  sharing burnctl with colleagues at scale — single-user is likely
+  fine, multi-user rollout risks ToS enforcement.
+- **Files:** `tools/oauth_sync.py`, `oauth_lookup.py`, `tools/mac-sync.py`
+- **Resolution paths:**
+  a) Confirm acceptable use with Anthropic legal/policy
+  b) Migrate to user-pasted usage data (no token reuse)
+  c) Restrict to single-user / personal deployment only
+  d) Accept risk for limited rollout
+- **Added:** v4.5.8 (2026-05-25).
+
+### TD-42 — v5.0 Chrome extension for chat title tracking
+- **Status:** open
+- **Priority:** P2
+- **Context:** `chat_title_sync.py` is removed from the npm tarball in
+  v4.5.8 (TD-38 effectively closed by removal, not refactor). The
+  killer feature (per-conversation token attribution) must come back
+  via an EDR-safe + ToS-safe path. Architecture decided: a Chrome
+  extension that reads `document.title` on claude.ai pages and POSTs
+  to the localhost burnctl dashboard via a shared connection token.
+- **Files (new):** `extension/manifest.json`,
+  `extension/content_script.js`, `extension/background.js`,
+  `extension/popup.html`, `extension/popup.js`, `extension/icons/`
+- **Files (changed):** `server.py` (new `/api/extension-titles` +
+  `/api/extension-token` endpoints), `db.py` (new
+  `extension_connections` table), `templates/dashboard.html` (new
+  `/settings/extension` UI)
+- **Plan:** 3 CC sessions (dashboard, extension scaffold, integration)
+  + Chrome Web Store submission. Developer-mode testing first, Web
+  Store submission after end-to-end works.
+- **Added:** v4.5.8 (2026-05-25).
+
+### TD-43 — Auto-detect project ownership (personal vs work/enterprise)
+- **Status:** open
+- **Priority:** P1 (blocks single-Mac multi-context users from getting
+  useful per-context dashboards)
+- **Context:** A single Mac may have multiple Claude Code OAuth accounts
+  in rotation (e.g. personal Max account + Confluent-issued Max/Team
+  OAuth). Today burnctl groups all sessions under one account and one
+  bucket ("Other"). For users wanting to see Confluent-only vs
+  personal-only views, manual maintained project-name lists are
+  fragile. Better: detect OAuth subscription type at scan time and
+  auto-tag sessions by tier. Heuristic — Enterprise/Team plan =
+  work/company; Pro/Max = personal. User can override.
+- **Design questions:**
+  a) Does JSONL contain OAuth subscription metadata? Earlier audit
+     showed keys (`parentUuid`, `isSidechain`, `userType`, `cwd`,
+     `sessionId`, `version`, `gitBranch`, `agentId`, `slug`, `type`) —
+     no clear plan field.
+  b) If not, can `~/.claude/.credentials.json` `subscriptionType` be
+     captured at scan time and attached to subsequent sessions?
+  c) Multi-OAuth detection: if user runs two terminals with two OAuths
+     in the same `~/.claude/` dir, can we distinguish at all?
+  d) Fallback: user-driven tagging UI in dashboard for sessions where
+     auto-detection fails.
+- **Files (likely):** `scanner.py`, `db.py` (new tag column on
+  `sessions`), `server.py` (new tagging endpoint), `templates/`
+  (filter UI)
+- **Plan:** v4.6 release. 2-3 CC sessions estimated.
+- **Added:** v4.5.8 (2026-05-26).

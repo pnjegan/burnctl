@@ -7,13 +7,17 @@ live source of truth after that is the `accounts` table in data/usage.db.
 import os
 
 # ─── Host settings ───────────────────────────────────────────────
-# If you run burnctl on a VPS and reach it via SSH tunnel, set
-# BURNCTL_VPS_IP in your environment so banners and help text show
-# the correct host. Defaults to "localhost" for a same-machine install.
-# Legacy CLAUDASH_VPS_IP / CLAUDASH_VPS_PORT are still honored for
-# operators upgrading from claudash 3.x — remove next major.
-VPS_IP = os.environ.get("BURNCTL_VPS_IP") or os.environ.get("CLAUDASH_VPS_IP", "localhost")
-VPS_PORT = int(os.environ.get("BURNCTL_VPS_PORT") or os.environ.get("CLAUDASH_VPS_PORT", "8080"))
+# burnctl dashboard host. Defaults to "localhost" for a same-machine
+# install. Set BURNCTL_HOST in your environment to point the CLI
+# banner/help text (and the tools/ collectors) at a self-hosted
+# dashboard reached over an SSH tunnel.
+# Legacy BURNCTL_VPS_IP / CLAUDASH_VPS_IP (and the _PORT variants) are
+# still honored for operators upgrading from older releases — remove
+# next major.
+BURNCTL_HOST = (os.environ.get("BURNCTL_HOST") or os.environ.get("BURNCTL_VPS_IP")
+                or os.environ.get("CLAUDASH_VPS_IP") or "localhost")
+BURNCTL_PORT = int(os.environ.get("BURNCTL_PORT") or os.environ.get("BURNCTL_VPS_PORT")
+                   or os.environ.get("CLAUDASH_VPS_PORT") or "8080")
 
 # ─── Account Setup ───────────────────────────────────────────────
 # Add your Claude accounts here. These are the seed values — once the

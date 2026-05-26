@@ -11,7 +11,7 @@ from datetime import datetime, timezone, timedelta
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from _version import VERSION
-from config import VPS_IP, VPS_PORT
+from config import BURNCTL_HOST, BURNCTL_PORT
 from db import (
     init_db, get_conn, get_insights, get_session_count, get_db_size_mb,
     get_accounts_config, get_claude_ai_accounts_all, get_latest_claude_ai_snapshot,
@@ -105,8 +105,8 @@ Commands:
 Paste the dashboard_key into the browser prompt the first time an admin
 button fails — it's saved to localStorage and reused.
 
-Local:      http://localhost:8080
-SSH tunnel: ssh -L 8080:localhost:8080 user@YOUR_VPS_IP
+Local:       http://localhost:8080
+Self-hosted: ssh -L 8080:localhost:8080 user@YOUR_HOST
 """
 from scanner import scan_all, start_periodic_scan
 from analyzer import (
@@ -354,11 +354,11 @@ def _run_dashboard(port=8080, no_browser=False, skip_init=False):
     if _is_headless():
         print("  Headless server detected — no browser auto-open", flush=True)
         print(f"  To view dashboard, run on your local machine:", flush=True)
-        vps_host = VPS_IP if VPS_IP and VPS_IP != "localhost" else "YOUR_VPS_IP"
-        print(f"    ssh -L {port}:localhost:{port} user@{vps_host}", flush=True)
+        dashboard_host = BURNCTL_HOST if BURNCTL_HOST and BURNCTL_HOST != "localhost" else "YOUR_HOST"
+        print(f"    ssh -L {port}:localhost:{port} user@{dashboard_host}", flush=True)
         print(f"  Then open: http://localhost:{port}", flush=True)
-    elif VPS_IP and VPS_IP != "localhost":
-        print(f"  SSH tunnel: ssh -L {port}:localhost:{port} user@{VPS_IP}", flush=True)
+    elif BURNCTL_HOST and BURNCTL_HOST != "localhost":
+        print(f"  Self-hosted: ssh -L {port}:localhost:{port} user@{BURNCTL_HOST}", flush=True)
         print(f"  Then open http://localhost:{port} in your browser.", flush=True)
     else:
         print(f"  Open http://localhost:{port} in your browser.", flush=True)
@@ -2357,7 +2357,7 @@ def cmd_admin_prune_scan_state():
 
 def main():
     if len(sys.argv) < 2 or sys.argv[1] in ("--help", "-h", "help"):
-        print(HELP_TEXT.format(vps_ip=VPS_IP))
+        print(HELP_TEXT)
         sys.exit(0)
 
     if sys.argv[1] in ("--version", "-v"):
