@@ -1115,3 +1115,20 @@ the next verdict change.
   (filter UI)
 - **Plan:** v4.6 release. 2-3 CC sessions estimated.
 - **Added:** v4.5.8 (2026-05-26).
+
+### TD-45 — Non-canonical DB path candidates in duplicated load_db() copies
+- **Status:** open
+- **Priority:** P3 (fold into TD-01 consolidation)
+- **Files:** `browser_sessions.py:64`, `fix_rules.py:30`
+- **Context:** Both embed a maintainer-specific fallback
+  `~/projects/burnctl/data/usage.db` in their candidate lists, rather than
+  the canonical `overhead_audit.py::load_db()` pair
+  (`data/usage.db` + `~/.burnctl/data/usage.db`). Flagged NO-GO (B2) by the
+  pre-session auditor on 2026-05-26.
+- **Why deferred:** ruled out-of-scope for v5.0 Session 1 —
+  `browser_sessions.py` is removed in Session 3, `fix_rules.py` is CLI-side
+  and untouched this session. New v5.0 code uses the canonical pattern, so no
+  new instances are introduced.
+- **Fix:** drop the maintainer fallback; converge on the canonical pair as
+  part of the TD-01 `db.open_local_db()` extraction.
+- **Added:** v5.0 S1 pre-session audit (2026-05-26).
