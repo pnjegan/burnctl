@@ -74,7 +74,6 @@
     "why_limit.py",
     "templates/*.html",
     "tools/hooks/",
-    "tools/chat_title_sync.py",
     "tools/mac-sync.py",
     "tools/oauth_sync.py",
     "tools/sync-daemon.py",
