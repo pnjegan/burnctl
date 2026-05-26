@@ -1,6 +1,8 @@
+import hashlib
 import hmac
 import json
 import os
+import secrets
 import sqlite3
 import sys
 import re
@@ -38,6 +40,7 @@ from analyzer import (
 )
 from scanner import scan_all, get_last_scan_time, preview_paths, discover_claude_paths, is_scan_running
 from insights import generate_insights
+from util.redact import redact_token
 from claude_ai_tracker import (
     poll_all as poll_claude_ai, get_account_statuses, get_last_poll_time,
     setup_account as tracker_setup_account, poll_single as tracker_poll_single,
@@ -1072,7 +1075,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         # /api/hooks/cost-event is localhost-bound, no-auth (Claude Code hooks
         #   are fire-and-forget shell scripts; demanding a key there is hostile).
         # All other write endpoints require X-Dashboard-Key.
-        _NO_DASH_KEY = {"/api/claude-ai/sync", "/api/hooks/cost-event", "/api/browser-chats"}
+        _NO_DASH_KEY = {"/api/claude-ai/sync", "/api/hooks/cost-event",
+                        "/api/browser-chats", "/api/extension/revoke"}
         if path not in _NO_DASH_KEY and not self._require_dashboard_key():
             return
 
@@ -1473,6 +1477,60 @@ class DashboardHandler(BaseHTTPRequestHandler):
             conn.close()
             self._serve_json({"ok": True, "upserted": len(rows)})
 
+        elif path == "/api/extension/connect":
+            # Owner action (X-Dashboard-Key already enforced above — this path
+            # is NOT in _NO_DASH_KEY). Generates a connection token, stores ONLY
+            # sha256(token), and returns the raw token once.
+            data = body or {}
+            label = (str(data.get("connection_label") or "").strip())[:120] or None
+            token = secrets.token_urlsafe(32)
+            token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+            conn = get_conn()
+            if conn is None:
+                self._serve_json({"error": "db unavailable"}, 503)
+                return
+            try:
+                cur = conn.execute(
+                    "INSERT INTO extension_connections "
+                    "(token_hash, connection_label, created_at) VALUES (?, ?, ?)",
+                    (token_hash, label, int(time.time())),
+                )
+                conn.commit()
+                cid = cur.lastrowid
+            finally:
+                conn.close()
+            # Raw token returned ONCE; never logged raw — route through redact_token().
+            print(f"[ext] connection created id={cid} label={label!r} "
+                  f"token={redact_token(token)}", file=sys.stderr)
+            self._serve_json({
+                "connection_id": cid,
+                "connection_label": label,
+                "token": token,  # shown once — client must store now
+                "note": "Store this token now. It is not recoverable.",
+            }, 201)
+
+        elif path == "/api/extension/revoke":
+            # Self-revoke: the connection authenticates with its OWN bearer token
+            # (this path is in _NO_DASH_KEY, so the dashboard-key gate is skipped).
+            # NOTE: commit 6 will add a separate owner-initiated revoke-by-id path
+            # POST /api/extension/connections/:id/revoke — different auth
+            # (X-Dashboard-Key) and connection_id taken from the URL, since the
+            # owner never holds the raw tokens (only hashes are stored).
+            conn_row = self.require_extension_auth()
+            if conn_row is None:
+                return
+            conn = get_conn()
+            try:
+                conn.execute(
+                    "UPDATE extension_connections SET revoked_at = ? WHERE id = ?",
+                    (int(time.time()), conn_row["id"]),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            print(f"[ext] connection revoked id={conn_row['id']}", file=sys.stderr)
+            self._serve_json({"ok": True, "connection_id": conn_row["id"], "revoked": True})
+
         else:
             self.send_error(404)
 
@@ -1610,6 +1668,56 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._serve_json({"error": "unauthorized"}, 401)
             return False
         return True
+
+    def _extension_401(self, msg="unauthorized"):
+        """401 with WWW-Authenticate: Bearer (extension endpoints)."""
+        body = json.dumps({"error": msg}).encode("utf-8")
+        self.send_response(401)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("WWW-Authenticate", "Bearer")
+        self.send_header("Access-Control-Allow-Origin", self._cors_origin())
+        self.send_header("Cache-Control", "no-cache, must-revalidate")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def require_extension_auth(self):
+        """Authenticate an extension request via 'Authorization: Bearer <token>'.
+        Returns the matching active connection row (dict) on success, or None
+        after writing a 401 (caller must return). Reused by the samples
+        endpoint (commit 3) — do not duplicate this logic there."""
+        raw = self.headers.get("Authorization", "")
+        parts = raw.split(None, 1)
+        if len(parts) != 2 or parts[0].lower() != "bearer" or not parts[1].strip():
+            self._extension_401("missing or malformed bearer token")
+            return None
+        token = parts[1].strip()
+        candidate = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        conn = get_conn()
+        if conn is None:
+            self._extension_401("unauthorized")
+            return None
+        try:
+            rows = conn.execute(
+                "SELECT id, connection_label, token_hash FROM extension_connections "
+                "WHERE revoked_at IS NULL"
+            ).fetchall()
+            match = None
+            for r in rows:
+                if hmac.compare_digest(candidate, r["token_hash"]):
+                    match = r
+                    break
+            if match is None:
+                self._extension_401("unauthorized")
+                return None
+            conn.execute(
+                "UPDATE extension_connections SET last_seen_at = ? WHERE id = ?",
+                (int(time.time()), match["id"]),
+            )
+            conn.commit()
+            return {"id": match["id"], "connection_label": match["connection_label"]}
+        finally:
+            conn.close()
 
     def _serve_template(self, filename):
         filename = os.path.basename(filename)
