@@ -127,9 +127,9 @@ def window_metrics(conn, account="personal_max"):
     # Rolling 5-hour lookback from `now`. The prior epoch-modulo snap to
     # 00/05/10/15/20 UTC excluded sessions from earlier in the same real
     # 5-hour period whenever `now` had just crossed a snap boundary.
-    # Anthropic's actual window resets_at may still differ — for precise
-    # tracking, enable browser sync (mac-sync.py or oauth_sync.py) which
-    # reads resets_at from the claude.ai API.
+    # Anthropic's actual window resets_at may still differ. (Pre-v5 builds
+    # read resets_at from the claude.ai API via a browser-cookie sync; that
+    # credential path was removed in v5 — this is now a local estimate only.)
     ACCOUNTS = get_accounts_config(conn)
     acct_info = ACCOUNTS.get(account, {})
     if not acct_info:

@@ -45,3 +45,6 @@ data/
 
 # Dev-only scripts that shouldn't be in the tarball
 deploy.sh
+
+# v5 clean-arch: retired credential-path code (quarantined, never shipped)
+ARCHIVE/

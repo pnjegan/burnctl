@@ -24,10 +24,8 @@ from db import (
     add_account_project, remove_account_project,
     get_claude_ai_accounts_all, get_claude_ai_account,
     get_latest_claude_ai_snapshot, get_claude_ai_snapshot_history,
-    clear_claude_ai_session,
+    clear_claude_ai_session,  # noqa: F401 — used by DELETE session route
     get_setting,
-    upsert_claude_ai_account, update_claude_ai_account_status,
-    insert_claude_ai_snapshot,
     get_real_story_insights,
 )
 
@@ -41,10 +39,7 @@ from analyzer import (
 from scanner import scan_all, get_last_scan_time, preview_paths, discover_claude_paths, is_scan_running
 from insights import generate_insights
 from util.redact import redact_token
-from claude_ai_tracker import (
-    poll_all as poll_claude_ai, get_account_statuses, get_last_poll_time,
-    setup_account as tracker_setup_account, poll_single as tracker_poll_single,
-)
+from claude_ai_tracker import get_account_statuses, get_last_poll_time
 
 TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
 
@@ -638,12 +633,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
             conn.close()
             self._serve_json(history)
 
-        elif path == "/tools/mac-sync.py":
-            # Gated — only return the script to authenticated callers.
-            if not self._require_dashboard_key():
-                return
-            self._serve_mac_sync()
-
         # ── Fix tracker GET endpoints ──
         elif path == "/api/fixes":
             from fix_tracker import all_fixes_with_latest
@@ -1071,7 +1060,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._serve_json({"error": "request too large"}, 413)
             return
 
-        # /api/claude-ai/sync keeps its existing X-Sync-Token check (for mac-sync.py).
+        # /api/claude-ai/sync is a removed-credential stub (returns 410); it is
+        #   left key-free so legacy collectors get a clear rejection, not a 401.
         # /api/hooks/cost-event is localhost-bound, no-auth (Claude Code hooks
         #   are fire-and-forget shell scripts; demanding a key there is hostile).
         # All other write endpoints require X-Dashboard-Key.
@@ -1124,10 +1114,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
             conn.close()
             self._serve_json({"status": "ok", "id": insight_id})
 
-        elif path == "/api/claude-ai/poll":
-            count = poll_claude_ai()
-            self._serve_json({"status": "ok", "accounts_polled": count})
-
         # ── Account management POST endpoints ──
         elif path == "/api/accounts":
             data = body or {}
@@ -1168,34 +1154,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._serve_json({"discovered_paths": discovered})
 
         # ── claude.ai browser tracking POST endpoints ──
-        elif re.match(r"^/api/claude-ai/accounts/([a-z][a-z0-9_]*)/setup$", path):
-            m = re.match(r"^/api/claude-ai/accounts/([a-z][a-z0-9_]*)/setup$", path)
-            account_id = m.group(1)
-            data = body or {}
-            session_key = data.get("session_key", "").strip()
-            if not session_key:
-                self._serve_json({"success": False, "error": "session_key is required"}, 400)
-            else:
-                result = tracker_setup_account(account_id, session_key)
-                status = 200 if result.get("success") else 400
-                self._serve_json(result, status)
-
-        elif re.match(r"^/api/claude-ai/accounts/([a-z][a-z0-9_]*)/refresh$", path):
-            m = re.match(r"^/api/claude-ai/accounts/([a-z][a-z0-9_]*)/refresh$", path)
-            account_id = m.group(1)
-            conn = get_conn()
-            snap = tracker_poll_single(account_id, conn)
-            acct = get_claude_ai_account(conn, account_id)
-            conn.close()
-            # Never expose session_key
-            if acct:
-                acct.pop("session_key", None)
-            self._serve_json({
-                "success": snap is not None and "error" not in (snap or {}),
-                "account": acct,
-                "snapshot": snap if snap and "error" not in snap else None,
-            })
-
+        # v5 clean-arch: the /setup and /refresh routes were removed. They
+        # accepted a raw session credential and polled claude.ai's consumer
+        # API; both capabilities are gone. The only browser-attribution
+        # intake now is the no-cookie extension (/api/extension/samples).
         elif path == "/api/claude-ai/sync":
             self._handle_sync(body or {})
 
@@ -1775,113 +1737,39 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _serve_mac_sync(self):
-        """Serve tools/mac-sync.py as-is. The sync token is NOT injected — the
-        user must retrieve it via `python3 cli.py claude-ai --sync-token` on the
-        VPS and paste it into SYNC_TOKEN manually. This removes the token-leak
-        vector where any caller could download a pre-filled script."""
-        filepath = os.path.join(PROJECT_DIR, "tools", "mac-sync.py")
-        try:
-            with open(filepath, "rb") as f:
-                body = f.read()
-            self.send_response(200)
-            self.send_header("Content-Type", "text/plain; charset=utf-8")
-            self.send_header("Content-Disposition", 'attachment; filename="mac-sync.py"')
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-        except FileNotFoundError:
-            self.send_error(500, "tools/mac-sync.py not found")
-
     def _handle_sync(self, data):
-        """Handle POST /api/claude-ai/sync from mac-sync.py.
-        Trust boundary is the sync token — if it matches, we trust the pushed data."""
-        received_token = self.headers.get("X-Sync-Token", "").strip()
-        conn = get_conn()
-        try:
-            stored_token = get_setting(conn, "sync_token")
-            if not stored_token or not hmac.compare_digest(received_token.encode("utf-8"), stored_token.strip().encode("utf-8")):
-                self._serve_json({"success": False, "error": "Invalid sync token"}, 403)
+        """Handle POST /api/claude-ai/sync.
+
+        v5 clean architecture: credential sync is REMOVED. This endpoint no
+        longer reads or stores any session credential. It exists only to
+        return a clear 410 to any legacy collector still pushing data, so the
+        operator notices and stops it. Nothing is written to the database.
+
+        Browser attribution now flows exclusively through the no-cookie
+        extension at /api/extension/samples (title + URL + timestamp only).
+        """
+        # Reject loudly if a legacy collector still tries to push a credential.
+        # Field names are matched case-insensitively so we don't have to spell
+        # the camelCase cookie name out in production source.
+        if isinstance(data, dict):
+            forbidden = {"session_key", "access_token", "cookie", "token"}
+            present = {str(k).lower().replace("-", "_") for k in data}
+            if present & forbidden or any(
+                "session" in k and "key" in k for k in present
+            ):
+                self._serve_json({
+                    "success": False,
+                    "error": "credential sync was removed in v5; this endpoint "
+                             "no longer accepts session credentials. Nothing "
+                             "was stored. Use the no-cookie browser extension.",
+                }, 410)
                 return
 
-            session_key = data.get("session_key", "").strip()
-            org_id = data.get("org_id", "").strip()
-            browser = data.get("browser", "")
-            account_hint = data.get("account_hint", "")
-
-            if not session_key:
-                self._serve_json({"success": False, "error": "session_key required"}, 400)
-                return
-
-            accounts = get_claude_ai_accounts_all(conn)
-            target_id = None
-            target_label = ""
-
-            for a in accounts:
-                if a.get("org_id") == org_id and org_id:
-                    target_id = a["account_id"]
-                    target_label = a.get("label", target_id)
-                    break
-
-            if not target_id and account_hint:
-                hint_lower = account_hint.lower()
-                for a in accounts:
-                    label_lower = (a.get("label") or "").lower()
-                    if any(word in hint_lower for word in label_lower.split() if len(word) > 2):
-                        target_id = a["account_id"]
-                        target_label = a.get("label", target_id)
-                        break
-
-            if not target_id:
-                for a in accounts:
-                    if a.get("status") == "unconfigured":
-                        target_id = a["account_id"]
-                        target_label = a.get("label", target_id)
-                        break
-
-            if not target_id and accounts:
-                target_id = accounts[0]["account_id"]
-                target_label = accounts[0].get("label", target_id)
-                print(f"WARNING: no org_id match for {org_id}, falling back to {target_id}", file=sys.stderr)
-                print("Check your config.py ACCOUNTS org_id settings", file=sys.stderr)
-
-            if not target_id:
-                self._serve_json({"success": False, "error": "No accounts configured"}, 400)
-                return
-
-            acct_row = conn.execute(
-                "SELECT plan FROM accounts WHERE account_id = ?", (target_id,)
-            ).fetchone()
-            plan = acct_row["plan"] if acct_row else "max"
-
-            upsert_claude_ai_account(conn, target_id, target_label, org_id, session_key, plan, "active")
-            conn.execute(
-                "UPDATE claude_ai_accounts SET mac_sync_mode = 1 WHERE account_id = ?",
-                (target_id,),
-            )
-            update_claude_ai_account_status(conn, target_id, "active", None)
-            print(f"[sync] Stored session for {target_id} from {browser} ({account_hint})", file=sys.stderr)
-
-            pct_used = 0
-            usage = data.get("usage")
-            if usage and isinstance(usage, dict):
-                insert_claude_ai_snapshot(conn, target_id, usage)
-                pct_used = max(
-                    usage.get("pct_used", 0),
-                    usage.get("five_hour_utilization", 0),
-                    usage.get("seven_day_utilization", 0),
-                )
-                print(f"[sync] Stored usage snapshot for {target_id}: {pct_used}% used", file=sys.stderr)
-
-            self._serve_json({
-                "success": True,
-                "account_label": target_label,
-                "matched_account": target_id,
-                "pct_used": pct_used,
-                "browser": browser,
-            })
-        finally:
-            conn.close()
+        self._serve_json({
+            "success": False,
+            "error": "claude.ai credential sync was removed in v5. "
+                     "No data was stored.",
+        }, 410)
 
     def _get_data(self, account):
         # Validate account param before using it as a cache key, so malicious

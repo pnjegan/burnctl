@@ -63,7 +63,6 @@
     "fix_tracker.py",
     "insights.py",
     "mcp_server.py",
-    "oauth_lookup.py",
     "overhead_audit.py",
     "peak_hour.py",
     "resume_audit.py",
@@ -77,9 +76,6 @@
     "why_limit.py",
     "templates/*.html",
     "tools/hooks/",
-    "tools/mac-sync.py",
-    "tools/oauth_sync.py",
-    "tools/sync-daemon.py",
     "CONTRIBUTING.md",
     "LICENSE",
     "README.md"

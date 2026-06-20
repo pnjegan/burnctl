@@ -93,11 +93,10 @@ MODEL_PRICING = {
 # Window settings per plan
 MAX_WINDOW_HOURS = 5
 
-# claude.ai web chat accounts — add yours here if using mac-sync.py browser tracking.
-# Example:
-#   CLAUDE_AI_ACCOUNTS = [
-#       {"label": "Personal Max", "session_key": "", "org_id": ""},
-#   ]
+# claude.ai web chat accounts. v5 clean architecture: browser tracking no
+# longer uses a session credential — it comes from the no-cookie extension
+# (document.title + URL + timestamp). Entries here are label/org metadata
+# only; no credential field is read or stored.
 CLAUDE_AI_ACCOUNTS = []
 
 # Cost targets per project (for insights).

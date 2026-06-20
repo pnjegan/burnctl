@@ -97,10 +97,7 @@ Commands:
                 (v2) Interactive wizard — pick Anthropic / AWS Bedrock /
                 OpenAI-compatible endpoint for fix generation
   init          First-run setup wizard (3 questions, then start)
-  claude-ai     Show claude.ai browser tracking status
-  sync-daemon   Auto-sync browser data every 5 minutes (background)
-  claude-ai --sync-token          Print sync token (for tools/mac-sync.py)
-  claude-ai --setup <account_id>  Paste a claude.ai session key interactively
+  claude-ai     Show claude.ai browser tracking status (read-only)
 
 Paste the dashboard_key into the browser prompt the first time an admin
 button fails — it's saved to localStorage and reused.
@@ -117,11 +114,9 @@ from analyzer import (
 from insights import generate_insights
 from server import start_server
 
-from claude_ai_tracker import (
-    poll_all as poll_claude_ai, start_periodic_poll as start_claude_ai_poll,
-    setup_account as tracker_setup_account,
-)
-
+# v5 clean-arch: claude.ai consumer-endpoint polling and credential setup were
+# removed. claude_ai_tracker now exposes only in-memory status getters, which
+# the dashboard imports directly — cli.py no longer needs anything from it.
 
 _PIDFILE = "/tmp/burnctl.pid"
 _pid_lock_handle = None
@@ -367,8 +362,9 @@ def _run_dashboard(port=8080, no_browser=False, skip_init=False):
     cleanup_orphan_mcp()
 
     start_periodic_scan(interval_seconds=300)
-    poll_claude_ai()
-    start_claude_ai_poll(interval_seconds=300)
+    # v5 clean-arch: no claude.ai polling on startup. The local-JSONL scan
+    # above is the only background collector; browser data arrives via the
+    # no-cookie extension POSTing to /api/extension/samples.
 
     start_server(port=port)
 
@@ -414,76 +410,30 @@ def _detect_from_credentials():
     return sub, email
 
 
-def _read_oauth_credentials():
-    """Re-read ~/.claude/.credentials.json for the raw claudeAiOauth block.
-    Returns the dict or None. Kept separate from _detect_from_credentials
-    so callers that need the access_token / expiresAt get the raw shape."""
-    path = os.path.expanduser("~/.claude/.credentials.json")
-    if not os.path.exists(path):
-        return None
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return None
-    oauth = data.get("claudeAiOauth") or {}
-    return oauth or None
+# v5 clean architecture: _read_oauth_credentials() was REMOVED. It existed
+# only to hand the OAuth accessToken to the (now-deleted) tier-2 plan lookup
+# that hit the claude.ai consumer account endpoint. Plan detection is now
+# local-only.
 
 
 def _detect_plan_two_tier():
-    """Two-tier plan detection for first-run UX.
+    """Plan detection for first-run UX — local only.
 
-    Tier 1: _detect_from_credentials() — reads subscriptionType from
-            ~/.claude/.credentials.json. Fast, offline.
-    Tier 2: oauth_lookup.fetch_account() — GET claude.ai/api/account
-            with the Bearer token. Network call, 4s hard cap.
+    Reads subscriptionType/email from ~/.claude/.credentials.json
+    (`_detect_from_credentials()`). Fast, offline, credential-free.
 
-    Returns (plan, email) — either may be None on total failure.
-    Never raises. All tier-2 errors logged to stderr with [oauth]
-    prefix so the user sees the reason but onboarding continues.
+    v5 clean architecture: the former tier 2 (a network call to the
+    claude.ai consumer account endpoint with the OAuth Bearer token)
+    was REMOVED. burnctl no longer calls claude.ai's consumer API at all.
+    If the local credentials file doesn't reveal the plan, we simply fall
+    through to the interactive wizard question.
+
+    Returns (plan, email) — either may be None. Never raises.
     """
     plan, email = _detect_from_credentials()
     if plan and plan in PLAN_DEFAULTS:
-        return plan, email  # Tier 1 succeeded — no network call.
-
-    oauth = _read_oauth_credentials()
-    if not oauth:
-        return None, email
-    token = oauth.get("accessToken") or ""
-    if not token:
-        return None, email
-
-    # Skip the network call if the token is already expired.
-    # Claude Code stores expiresAt in milliseconds.
-    expires_at = oauth.get("expiresAt") or 0
-    if expires_at and expires_at > 1e12:
-        expires_at_sec = expires_at / 1000.0
-    else:
-        expires_at_sec = expires_at or 0
-    if expires_at_sec and expires_at_sec < time.time():
-        print(
-            "[oauth] plan auto-detect unavailable (token expired); "
-            "continuing to wizard",
-            file=sys.stderr,
-        )
-        return None, email
-
-    try:
-        from oauth_lookup import fetch_account
-    except ImportError:
-        return None, email  # module missing — silent fallthrough
-
-    api_email, _org_id, api_plan, err = fetch_account(token, timeout=4.0)
-    if err:
-        print(
-            f"[oauth] plan auto-detect unavailable ({err}); "
-            "continuing to wizard",
-            file=sys.stderr,
-        )
-        return None, email or api_email
-    if api_plan in PLAN_DEFAULTS:
-        return api_plan, email or api_email
-    return None, email or api_email
+        return plan, email
+    return None, email
 
 
 def cmd_init():
@@ -1733,13 +1683,6 @@ def cmd_restore():
     sys.exit(0)
 
 
-def cmd_sync_daemon():
-    """Run the sync daemon that pushes claude.ai browser data every 5 min."""
-    daemon = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                          "tools", "sync-daemon.py")
-    os.execv(sys.executable, [sys.executable, daemon])
-
-
 def _prompt_secret(label):
     """Prompt for a secret without echoing. Falls back to visible input
     when no TTY (e.g. piped stdin). Returns stripped string or ''."""
@@ -1895,21 +1838,18 @@ def cmd_keys():
     print(f"     → paste into the browser prompt when an admin button returns 401")
     print()
     print(f"  sync_token    : {st}")
-    print(f"     → paste into tools/mac-sync.py SYNC_TOKEN variable")
+    print(f"     → authenticates non-secret telemetry sync to a dashboard host")
     print()
 
 
 def cmd_claude_ai():
-    """Show claude.ai browser tracking status for all accounts."""
-    init_db()
+    """Show claude.ai browser tracking status for all accounts.
 
-    # Handle --sync-token: print ONLY the raw token, nothing else
-    if len(sys.argv) >= 3 and sys.argv[2] == "--sync-token":
-        conn = get_conn()
-        token = get_setting(conn, "sync_token")
-        conn.close()
-        print(token)
-        return
+    v5 clean architecture: this is now a read-only status view. There is no
+    longer any polling (so "last polled" reads "never" for legacy rows) and
+    no `--setup` / session-key intake. Browser data comes from the no-cookie
+    extension; see `burnctl` dashboard → Browser activity."""
+    init_db()
 
     conn = get_conn()
     accounts = get_claude_ai_accounts_all(conn)
@@ -1953,20 +1893,6 @@ def cmd_claude_ai():
         else:
             err = a.get("last_error", "unknown")
             print(f"  {label}: {status} | last polled {poll_ago} | {err}")
-
-    # Handle --setup flag
-    if len(sys.argv) >= 4 and sys.argv[2] == "--setup":
-        target_id = sys.argv[3]
-        print(f"\n  Setting up claude.ai tracking for '{target_id}'...")
-        session_key = input("  Paste session key (sk-ant-sid01-...): ").strip()
-        if not session_key:
-            print("  Cancelled — no session key provided.")
-        else:
-            result = tracker_setup_account(target_id, session_key)
-            if result["success"]:
-                print(f"  Connected: {result['label']}, {result['pct_used']:.1f}% window used")
-            else:
-                print(f"  Error: {result['error']}")
 
     print()
     conn.close()
@@ -2431,7 +2357,6 @@ def main():
         "mcp": cmd_mcp,
         "keys": cmd_keys,
         "claude-ai": cmd_claude_ai,
-        "sync-daemon": cmd_sync_daemon,
         "realstory": cmd_realstory,
         "backup": cmd_backup,
         "restore": cmd_restore,

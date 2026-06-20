@@ -2,6 +2,7 @@ import sqlite3
 import json
 import os
 import stat
+import sys
 import time
 import re
 
@@ -644,15 +645,50 @@ def init_db():
         exists = conn.execute("SELECT id FROM claude_ai_accounts WHERE account_id = ?", (a["account_id"],)).fetchone()
         if not exists:
             conn.execute(
+                # v5: session_key seeded as NULL — it is never populated.
                 """INSERT OR IGNORE INTO claude_ai_accounts
                    (account_id, label, org_id, session_key, plan, status, created_at, updated_at)
-                   VALUES (?, ?, '', '', ?, 'unconfigured', ?, ?)""",
+                   VALUES (?, ?, '', NULL, ?, 'unconfigured', ?, ?)""",
                 (a["account_id"], a["label"], a["plan"], int(time.time()), int(time.time())),
             )
+
+    # v5 clean architecture: wipe any legacy session credential out of the
+    # claude_ai_accounts.session_key column. STATE-3 atomic write with a
+    # read-back assert. Idempotent (no-op once all rows are NULL).
+    _migrate_wipe_session_keys(conn)
 
     conn.commit()
     conn.close()
     _lock_db_file()
+
+
+def _migrate_wipe_session_keys(conn):
+    """ADD-only wipe: NULL out any value ever stored in
+    claude_ai_accounts.session_key, then read back and assert the column is
+    fully empty. The column itself is preserved (no destructive migration);
+    it is simply left permanently NULL under the v5 architecture, which no
+    longer reads, stores, transmits, or replays any session credential.
+
+    Returns the number of rows wiped on this run (0 when already clean).
+    """
+    cur = conn.execute(
+        "UPDATE claude_ai_accounts SET session_key = NULL "
+        "WHERE session_key IS NOT NULL"
+    )
+    wiped = cur.rowcount
+    conn.commit()
+    # Read-back assert — the write must have left zero populated rows.
+    remaining = conn.execute(
+        "SELECT COUNT(*) FROM claude_ai_accounts WHERE session_key IS NOT NULL"
+    ).fetchone()[0]
+    if remaining != 0:
+        raise RuntimeError(
+            f"session_key wipe failed: {remaining} row(s) still populated"
+        )
+    if wiped:
+        print(f"[db] v5 migration: wiped session_key on {wiped} account row(s)",
+              file=sys.stderr)
+    return wiped
 
 
 def _seed_from_config(conn):
@@ -1589,24 +1625,11 @@ def get_claude_ai_account(conn, account_id):
     return dict(row) if row else None
 
 
-def upsert_claude_ai_account(conn, account_id, label, org_id, session_key, plan, status):
-    now = int(time.time())
-    existing = conn.execute("SELECT id FROM claude_ai_accounts WHERE account_id = ?", (account_id,)).fetchone()
-    if existing:
-        conn.execute(
-            """UPDATE claude_ai_accounts
-               SET label=?, org_id=?, session_key=?, plan=?, status=?, updated_at=?
-               WHERE account_id=?""",
-            (label, org_id, session_key, plan, status, now, account_id),
-        )
-    else:
-        conn.execute(
-            """INSERT INTO claude_ai_accounts
-               (account_id, label, org_id, session_key, plan, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (account_id, label, org_id, session_key, plan, status, now, now),
-        )
-    conn.commit()
+# v5 clean architecture: upsert_claude_ai_account() was REMOVED. It was the
+# only writer of a real value into claude_ai_accounts.session_key (from the
+# credential sync / setup paths, now gone). Per the ADD-only schema rule the
+# session_key column is kept but left permanently empty (see
+# _migrate_wipe_session_keys below). Do not reintroduce a writer for it.
 
 
 def update_claude_ai_account_status(conn, account_id, status, last_error=None):
@@ -1619,9 +1642,12 @@ def update_claude_ai_account_status(conn, account_id, status, last_error=None):
 
 
 def clear_claude_ai_session(conn, account_id):
+    # v5: session_key is wiped to NULL (not '') — the column is permanently
+    # empty under the clean architecture. org_id is cleared and the account
+    # returns to 'unconfigured'.
     now = int(time.time())
     conn.execute(
-        "UPDATE claude_ai_accounts SET session_key='', org_id='', status='unconfigured', updated_at=? WHERE account_id=?",
+        "UPDATE claude_ai_accounts SET session_key=NULL, org_id='', status='unconfigured', updated_at=? WHERE account_id=?",
         (now, account_id),
     )
     conn.commit()
