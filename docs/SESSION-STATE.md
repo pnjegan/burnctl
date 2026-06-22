@@ -27,9 +27,51 @@ of truth.
 | G5       | **PASS**                    | `2121f29` | banned-string gate; E-banned now **L3-mechanical** |
 | G1.6     | **DONE (FOUND)**            | DB data-op 2026-06-22 | STATE-1 scan found 1 harvested-identifier column with real values: `claude_ai_accounts.org_id` (2 claude.ai org UUIDs). `raw_response` identifier-free; `account_id`/`label` are local self-assigned nicknames (left as-is); `session_key` already NULL |
 | G1.6b    | **DONE**                    | DB data-op 2026-06-22 | STATE-3 NULL-wipe of `org_id` on the 2 stale rows (by rowid 1 & 2, NULL not `''`), atomic txn + pre-commit asserts + fresh read-back. Post: org_id non-null=0, rows still 2, account_id/label untouched, `session_key` re-verified NULL. Re-scan: zero harvested identifiers remain in either table |
+| G2-STEP0 | **502 KILL — PASS / cold-start residual** | proxy `/stats` 2026-06-22 | headroom proxy 502 storm fixed via config only (no burnctl code). See block below for proven-vs-pending |
+
+### G2 STEP 0 — headroom 502 fix (config-only; STEP 0 of G2, adoption checklist NOT started)
+
+**Root cause (from `/stats` request log):** `cc()` → `headroom wrap claude` defaulted to the
+`agent-90` savings profile (`wrap.py:127`), which carries `force_kompress=True`. On large
+(~120k) cache-miss turns the forced ML Kompress path stalled ~30s, timed out, applied **nothing**
+(empty transforms, 0% savings), and returned a tiny error body — the 502. Confirmed: reqs
+000086/090/091 = 122k→122k, 0% saved, opt_latency ~30s, transforms `[]`.
+
+**Fix (two coordinated config edits, no code):**
+1. `~/.bashrc:185` `cc()` wrap line → `HEADROOM_SAVINGS_PROFILE=balanced HEADROOM_DISABLE_KOMPRESS=1`
+   (and **removed** `--code-graph` — see cold-start note). `balanced` profile ships
+   `force_kompress=False` + `smart_crusher` structural path (`agent_savings.py:87`); 70% honest
+   target vs agent-90's unreachable 90% (it delivered only ~21.5–28%).
+2. tmux `headroom` daemon relaunched: `HEADROOM_SAVINGS_PROFILE=balanced HEADROOM_DISABLE_KOMPRESS=1 headroom proxy`
+   (env confirmed in `/proc/<pid>/environ`). `.bashrc` env kept in sync so `wrap` reuses the
+   daemon instead of restarting it back to agent-90.
+
+**PROVEN NOW (against `/stats` ground truth):** config is `balanced` + `force_kompress=False` +
+`HEADROOM_DISABLE_KOMPRESS=1` (live process env). Real `cc` turns return **200** with a
+**structural** transform (`router:protected:system_message`), **no kompress path**, and
+`by_status` shows **zero 502s**. Steady-state `optimization_latency ≈ 92ms`. The 502 mechanism
+(forced 30s ML Kompress → timeout → empty transform → 502) is **removed by construction**.
+Tidify12 bypass intact (only the `else` branch of `cc()` was edited; `*Tidify12*` branch
+unchanged → PHI boundary holds).
+
+**RESIDUAL / CAVEAT (not overclaiming):** the **first** request after a cold daemon start cost
+**~17.7s** opt_latency (down from ~38s when `--code-graph` was on; dropping it halved the
+cold-start). This is **not** kompress and **not** code-graph — it's one-time first-request daemon
+init, paid **once per daemon start**, and it is a **200, not a crash**. Under 30s but not "well
+under." Did **not** iterate further per the STOP rule.
+
+**PENDING (confirmed only on next real use):**
+- Zero-502s across a **full heavy multi-hour session** — proven by construction here, but not yet
+  observed end-to-end on real heavy traffic.
+- **Compression > 0** (real structural savings) — NOT demonstrable on tiny single-turn `-p`
+  requests (balanced doesn't compress user/system msgs, protects recent 4, no prior turns to
+  crush → 0% is expected, not a fault). Needs a real multi-turn session.
+
+**Out of scope (untouched):** the rest of the G2 adoption checklist (wrap config, holdout, MCP
+stats, learn, local-first). **STOP before adoption** per session instruction.
 
 **Open (not yet verified):**
-- **G2** — headroom full-adoption harness.
+- **G2** — headroom full-adoption harness (**STEP 0 / 502-fix done; adoption checklist not started**).
 - **G3** — credit-pool burn-down tracker.
 - **G4** — net-vs-gross headroom auditor.
 
@@ -104,6 +146,14 @@ artifact/phase lands**. Until then it stays here as a plan, not a claim.
 
 ## Loop log (newest first)
 
+- **G2 STEP 0** (config-only, 2026-06-22) — fixed headroom proxy 502 storm. Root cause:
+  `cc()`→`headroom wrap` default `agent-90` profile forced `force_kompress` → 30s ML stall →
+  502 on ~120k cache-miss turns. Fix: `.bashrc` cc() + tmux daemon → `balanced` profile +
+  `HEADROOM_DISABLE_KOMPRESS=1`, dropped `--code-graph`. Verified vs `/stats`: zero 502s,
+  steady-state opt_latency ~92ms, structural transform only, no kompress, Tidify12 bypass intact.
+  Residual: one-time ~17.7s cold-start on daemon's first request (down from 38s). PENDING:
+  zero-502 across a full heavy session; compression>0 needs a real multi-turn session.
+  Adoption checklist NOT started — STOPPED per instruction.
 - **G1.6 / G1.6b** (DB data-op, 2026-06-22) — STATE-1 scan found
   `claude_ai_accounts.org_id` holding 2 real claude.ai org UUIDs (stale
   pre-v5 polling residue; no current writer). STATE-3 NULL-wiped both by
