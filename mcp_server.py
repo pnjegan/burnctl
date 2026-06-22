@@ -262,7 +262,7 @@ def _tool_burnctl_action_center(args):
 
 _ALLOWED_WASTE_PATTERNS = (
     "repeated_reads", "floundering", "deep_no_compact",
-    "cost_outlier", "bad_compact", "rewind_heavy",
+    "cost_outlier", "bad_compact", "rewind_heavy", "cost_anomaly",
 )
 
 

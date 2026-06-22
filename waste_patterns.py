@@ -1,6 +1,6 @@
 """Waste pattern detection — burnctl intelligence layer.
 
-Detects four patterns of wasteful Claude Code usage:
+Detects five patterns of wasteful Claude Code usage:
 
   1. FLOUNDERING           — same tool name called >=4 times in a row
                              without any other tool, suggesting Claude
@@ -11,6 +11,11 @@ Detects four patterns of wasteful Claude Code usage:
                              per-project average.
   4. DEEP_CONTEXT_NO_COMPACT — session has >100 turns and zero compaction
                              events (`/compact` never fired).
+  5. COST_ANOMALY          — spend-anomaly surface (r1 robust median+MAD
+                             outlier / r2 weekly-rate acceleration / r3
+                             spend-without-output). SURFACE ONLY: it flags
+                             and records evidence; it never pauses, kills,
+                             or throttles spend (enforcement is out of scope).
 
 Each detection is UPSERTed into `waste_events` keyed on
 (session_id, pattern_type).
@@ -25,6 +30,7 @@ import json
 import os
 import re
 import sqlite3
+import statistics
 import time
 from collections import defaultdict
 
@@ -38,6 +44,26 @@ FLOUNDER_WINDOW = 50             # repeats must sit within N consecutive tool ca
 REPEATED_READ_THRESHOLD = 3      # same file read N times in one session
 COST_OUTLIER_MULTIPLIER = 3.0    # session cost > Nx project avg
 DEEP_TURN_THRESHOLD = 100        # turns in a session
+
+# ─── Cost-anomaly detector (surface-only spend-anomaly flags) ────
+# Robust median+MAD is chosen over a plain "Nx median": burnctl's
+# per-session cost distribution is bimodal (hundreds of trivial sessions +
+# many large ones), so a low multiple over-flags the fat tail — on real
+# usage.db, "3x median" flagged 27.8% of sessions. median + 8*MAD with a
+# $300 floor isolates the genuine extreme (3.6% on the same history).
+# All thresholds tuned against the live usage.db backtest, 2026-06-22.
+COST_ANOMALY_WINDOW_DAYS = 7        # r1: trailing window for the baseline
+COST_ANOMALY_MIN_BASELINE = 5       # r1: sessions in window before it can fire
+COST_ANOMALY_MAD_K = 8.0            # r1: cost > median + K * MAD(window)
+COST_ANOMALY_R1_FLOOR = 300.0       # r1: AND absolute session cost >= this ($)
+COST_ANOMALY_R2_MULT = 2.0          # r2: week spend > Nx the prior week
+COST_ANOMALY_R2_PRIOR_FLOOR = 860.0 # r2: prior week must clear this — stops a
+                                    #     quiet-week recovery reading as a spike
+# Anthropic's weekly usage window resets Thu 06:00 UTC; this is one such reset
+# instant, used only as the modulo anchor for weekly bucketing.
+COST_ANOMALY_RESET_ANCHOR = 1750831200
+COST_ANOMALY_R3_COST_FLOOR = 20.0   # r3: spend-without-output cost gate ($)
+COST_ANOMALY_R3_OUTPUT_FLOOR = 3000 # r3: AND output_tokens strictly below this
 
 
 # ─── JSONL tool-use extraction ───────────────────────────────────
@@ -351,6 +377,116 @@ def detect_bad_compacts(conn, project=None, days=30):
 
 # ─── Main detection pass ─────────────────────────────────────────
 
+def _detect_cost_anomalies(conn):
+    """Spend-anomaly detector — SURFACE ONLY (flags + evidence, never enforces).
+
+    Flags a session when ANY of:
+      r1  session cost > median + COST_ANOMALY_MAD_K * MAD of session costs in
+          the trailing COST_ANOMALY_WINDOW_DAYS, AND cost >= COST_ANOMALY_R1_FLOOR.
+          Robust median+MAD because a plain "Nx median" over-flags burnctl's
+          bimodal cost distribution.
+      r2  a weekly window's spend > COST_ANOMALY_R2_MULT x the prior week
+          (Anthropic Thu-06:00-UTC reset cadence), with the prior week above
+          COST_ANOMALY_R2_PRIOR_FLOOR so a recovery from a quiet week is not a
+          spike. Attributed to that week's single most expensive session.
+      r3  cost >= COST_ANOMALY_R3_COST_FLOOR AND output_tokens <
+          COST_ANOMALY_R3_OUTPUT_FLOOR — spend-without-output, the stuck-loop
+          signature (GH #57719). A forward guard; may match nothing on clean data.
+
+    Returns (flags, insufficient_baseline) where `flags` is a list of dicts
+    ready for insert_waste_event. A session hit by several rules yields ONE flag
+    (waste_events UPSERTs on (session_id, pattern_type)); `detail.rules` records
+    every rule that fired with its numbers. `insufficient_baseline` counts the
+    sessions r1 could not judge for lack of trailing history — reported, not flagged.
+
+    Read-only against the sessions table; writes nothing itself.
+    """
+    rows = conn.execute(
+        "SELECT session_id, project, account, "
+        "       COALESCE(SUM(cost_usd), 0) AS cost, "
+        "       COALESCE(SUM(output_tokens), 0) AS out_tok, "
+        "       COUNT(*) AS turns, MIN(timestamp) AS t0 "
+        "FROM sessions GROUP BY session_id"
+    ).fetchall()
+    S = [dict(r) for r in rows]
+    S.sort(key=lambda x: x["t0"] or 0)
+
+    fired = {}  # session_id -> {"s": session, "rules": {rule: evidence}}
+
+    def _mark(s, rule, evidence):
+        fired.setdefault(s["session_id"], {"s": s, "rules": {}})["rules"][rule] = evidence
+
+    # ── r1: robust median+MAD over the trailing window ──
+    win = COST_ANOMALY_WINDOW_DAYS * 86400
+    insufficient_baseline = 0
+    for s in S:
+        if s["t0"] is None:
+            insufficient_baseline += 1
+            continue
+        base = [x["cost"] for x in S
+                if x["t0"] is not None and s["t0"] - win <= x["t0"] < s["t0"]]
+        if len(base) < COST_ANOMALY_MIN_BASELINE:
+            insufficient_baseline += 1
+            continue
+        med = statistics.median(base)
+        mad = statistics.median([abs(x - med) for x in base]) or 1e-9
+        robust = (s["cost"] - med) / mad
+        if robust > COST_ANOMALY_MAD_K and s["cost"] >= COST_ANOMALY_R1_FLOOR:
+            _mark(s, "r1_robust_outlier", {
+                "cost": round(s["cost"], 2),
+                "median_window": round(med, 2),
+                "mad": round(mad, 2),
+                "robust_score": round(robust, 1),
+                "baseline_n": len(base),
+            })
+
+    # ── r2: weekly spend vs prior week (Thu-06:00-UTC reset cadence) ──
+    wk = defaultdict(list)
+    for s in S:
+        if s["t0"] is not None:
+            wk[(s["t0"] - COST_ANOMALY_RESET_ANCHOR) // 604800].append(s)
+    for w in sorted(wk):
+        if w - 1 not in wk:
+            continue
+        cur = sum(x["cost"] for x in wk[w])
+        prev = sum(x["cost"] for x in wk[w - 1])
+        if prev < COST_ANOMALY_R2_PRIOR_FLOOR:
+            continue  # quiet prior week — too little base to call this a spike
+        if cur > COST_ANOMALY_R2_MULT * prev:
+            top = max(wk[w], key=lambda x: x["cost"])
+            _mark(top, "r2_weekly_acceleration", {
+                "week_cost": round(cur, 2),
+                "prior_week_cost": round(prev, 2),
+                "ratio": round(cur / prev, 2),
+            })
+
+    # ── r3: spend-without-output (stuck-loop guard, GH #57719) ──
+    for s in S:
+        if (s["cost"] >= COST_ANOMALY_R3_COST_FLOOR
+                and s["out_tok"] < COST_ANOMALY_R3_OUTPUT_FLOOR):
+            _mark(s, "r3_spend_without_output", {
+                "cost": round(s["cost"], 2),
+                "output_tokens": s["out_tok"],
+            })
+
+    flags = []
+    for sid, rec in fired.items():
+        s, rules = rec["s"], rec["rules"]
+        # red for the genuine-anomaly rules; amber when only the weekly-rate fired
+        severity = "red" if ("r1_robust_outlier" in rules
+                             or "r3_spend_without_output" in rules) else "amber"
+        flags.append({
+            "session_id": sid,
+            "project": s["project"],
+            "account": s["account"],
+            "severity": severity,
+            "turns": s["turns"] or 0,
+            "cost": s["cost"],
+            "detail": {"detector": "cost_anomaly", "rules": rules},
+        })
+    return flags, insufficient_baseline
+
+
 def detect_all(conn=None):
     """Run every detector against the latest scan and refresh waste_events.
 
@@ -512,6 +648,22 @@ def detect_all(conn=None):
     except Exception as e:
         print(f"[waste_patterns] bad_compact detection error: {e}", file=__import__("sys").stderr)
 
+    # ── 6: COST_ANOMALY — spend-anomaly surface (r1 robust-outlier /
+    #        r2 weekly-acceleration / r3 spend-without-output). SURFACE ONLY:
+    #        writes a flag + its evidence, never pauses/kills/throttles spend. ──
+    cost_anomaly_count = 0
+    cost_anomaly_insufficient = 0
+    try:
+        ca_flags, cost_anomaly_insufficient = _detect_cost_anomalies(conn)
+        for f in ca_flags:
+            insert_waste_event(
+                conn, f["session_id"], f["project"], f["account"],
+                "cost_anomaly", f["severity"], f["turns"], f["cost"], f["detail"],
+            )
+            cost_anomaly_count += 1
+    except Exception as e:
+        print(f"[waste_patterns] cost_anomaly detection error: {e}", file=__import__("sys").stderr)
+
     # Record scan timestamp for incremental next run
     set_setting(conn, "last_waste_scan", str(int(time.time())))
     conn.commit()
@@ -522,6 +674,8 @@ def detect_all(conn=None):
         "cost_outliers": outlier_count,
         "deep_no_compact": deep_count,
         "bad_compacts": bad_compact_count,
+        "cost_anomalies": cost_anomaly_count,
+        "cost_anomaly_insufficient_baseline": cost_anomaly_insufficient,
     }
 
     if should_close:
@@ -544,6 +698,7 @@ def waste_summary_by_project(conn, days=7):
         "floundering_sessions": 0,
         "repeated_read_sessions": 0,
         "cost_outliers": 0,
+        "cost_anomalies": 0,
         "deep_no_compact": 0,
         "bad_compacts": 0,
         "bad_compact_severity": None,
@@ -571,6 +726,9 @@ def waste_summary_by_project(conn, days=7):
             result[proj]["repeated_read_sessions"] = n
         elif pt == "cost_outlier":
             result[proj]["cost_outliers"] = n
+        elif pt == "cost_anomaly":
+            result[proj]["cost_anomalies"] = n
+            result[proj]["total_waste_cost_est"] += cost
         elif pt == "deep_no_compact":
             result[proj]["deep_no_compact"] = n
         elif pt == "bad_compact":
