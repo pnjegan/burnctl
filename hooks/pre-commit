@@ -1,0 +1,23 @@
+#!/bin/bash
+# burnctl G5 — git pre-commit gate.
+#
+# Blocks a commit if a claude.ai credential-movement string
+# (sessionKey / Cookie: / claude.ai/api) reappears in a prod path. This is
+# the earliest local catch; daily_qa.py runs the same gate as the mandatory
+# pre-publish gate (and via cron).
+#
+# Install (local, not auto-applied — git only runs .git/hooks/):
+#   ln -sf ../../hooks/pre-commit .git/hooks/pre-commit
+# or:
+#   cp hooks/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+#
+# The gate (tools/check_banned_strings.py) carries its own inlined allowlist.
+set -euo pipefail
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+if ! python3 "$REPO_ROOT/tools/check_banned_strings.py"; then
+  echo "" >&2
+  echo "pre-commit BLOCKED by G5 banned-string gate (see above)." >&2
+  echo "If a hit is a legitimate defensive use, add it to the allowlist in" >&2
+  echo "tools/check_banned_strings.py — do not weaken the gate." >&2
+  exit 1
+fi

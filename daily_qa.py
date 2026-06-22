@@ -412,6 +412,30 @@ def check_researcher_staleness():
     return WOW, f"research-reports/{label} refreshed {hours:.1f}h ago"
 
 
+def check_banned_strings():
+    """G5 gate — fail the QA run (DOD) if a claude.ai credential-movement
+    string (sessionKey / Cookie: / claude.ai/api) reappears in a prod path.
+
+    Delegates to tools/check_banned_strings.py, which carries its own inlined
+    scope-out allowlist (it does not read AUDIT.md or any doc at runtime). A
+    DOD here makes the mandatory pre-publish gate (exit 2) block the publish,
+    which is the most reliable enforcement on this npm/VPS repo.
+    """
+    try:
+        tools_dir = str(REPO_DIR / "tools")
+        if tools_dir not in sys.path:
+            sys.path.insert(0, tools_dir)
+        import check_banned_strings as gate
+        violations = gate.scan_violations(REPO_DIR)
+    except Exception as e:
+        return DOD, f"G5 gate failed to run: {e}"
+    if violations:
+        sample = "; ".join(f"{rel}:{ln}" for rel, ln, _, _ in violations[:3])
+        more = "" if len(violations) <= 3 else f" (+{len(violations) - 3} more)"
+        return DOD, f"{len(violations)} banned-string violation(s) in prod: {sample}{more}"
+    return WOW, "0 credential-movement strings in prod paths"
+
+
 TESTS = [
     # npx commands — run from fresh /tmp
     ("audit",            "npx",  "audit",                 score_audit),
@@ -492,6 +516,20 @@ def run_all_tests():
         "name": "researcher-staleness",
         "kind": "local",
         "arg": "research-reports/latest.md mtime",
+        "status": status,
+        "evidence": evidence,
+        "exit_code": 0 if status != DOD else 2,
+        "elapsed_sec": round(time.monotonic() - t0, 2),
+        "output_head": evidence[:500],
+    })
+
+    # G5 — banned-string enforcement (no credential-movement strings in prod).
+    t0 = time.monotonic()
+    status, evidence = check_banned_strings()
+    results.append({
+        "name": "banned-strings",
+        "kind": "local",
+        "arg": "tools/check_banned_strings.scan_violations",
         "status": status,
         "evidence": evidence,
         "exit_code": 0 if status != DOD else 2,
@@ -828,7 +866,7 @@ def main():
     prior_path = QA_DIR / "latest.md"
     prior = load_prior_results(prior_path)
 
-    print(f"burnctl daily_qa — running {len(TESTS) + 1} checks...")
+    print(f"burnctl daily_qa — running {len(TESTS) + 3} checks...")
     results = run_all_tests()
     local_metrics = capture_local_metrics()
     trend_kv = extract_report_metrics(results, local_metrics)
