@@ -350,101 +350,6 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 .delete-confirm p { color: var(--accent-red); margin-bottom: 10px; }
 .delete-confirm .actions { display: flex; gap: 8px; }
 
-/* ── Browser (claude.ai) card ───────────────────────────────────── */
-.browser-card {
-  background: var(--surface-warm);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 16px 20px;
-  margin-top: 16px;
-}
-.browser-head {
-  display: flex; justify-content: space-between; align-items: baseline;
-  margin-bottom: 10px;
-}
-.browser-title {
-  font-family: var(--sans);
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-secondary);
-}
-.browser-status {
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--text-tertiary);
-}
-.browser-row {
-  font-family: var(--mono);
-  font-size: 12px;
-  color: var(--text-primary);
-  margin-bottom: 8px;
-}
-.browser-row .val { font-weight: 500; }
-.browser-actions {
-  display: flex; gap: 6px;
-  margin-top: 10px;
-}
-
-.setup-steps {
-  display: none;
-  margin-top: 14px;
-  padding: 14px 16px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-}
-.setup-steps.open { display: block; }
-.step {
-  display: flex; gap: 12px;
-  font-family: var(--sans);
-  font-size: 12px;
-  color: var(--text-secondary);
-  margin-bottom: 12px;
-}
-.step-dot {
-  width: 20px; height: 20px;
-  border-radius: 50%;
-  background: var(--surface-warm);
-  border: 1px solid var(--border);
-  display: flex; align-items: center; justify-content: center;
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--text-secondary);
-  flex-shrink: 0;
-}
-.step.done .step-dot { background: var(--accent-green); border-color: var(--accent-green); color: white; }
-.setup-input {
-  display: flex; gap: 8px;
-  margin-top: 10px;
-}
-.setup-input input {
-  flex: 1;
-  padding: 8px 12px;
-  font-family: var(--mono);
-  font-size: 12px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-}
-.setup-input input:focus { outline: none; border-color: var(--text-primary); }
-.setup-result {
-  margin-top: 10px;
-  padding: 8px 12px;
-  border-radius: 4px;
-  font-family: var(--mono);
-  font-size: 12px;
-}
-.setup-result.ok { background: #E6F4EF; color: var(--accent-green); }
-.setup-result.fail { background: #FCE8E6; color: var(--accent-red); }
-.security-note {
-  margin-top: 12px;
-  font-size: 11px;
-  color: var(--text-tertiary);
-  font-style: italic;
-}
-
 /* ── Empty state ────────────────────────────────────────────────── */
 .empty {
   text-align: center;
@@ -517,7 +422,7 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 
 <main class="content">
   <h1 class="page-title">Accounts</h1>
-  <p class="page-sub">Configure Claude subscriptions, data paths, projects, and claude.ai browser tracking.</p>
+  <p class="page-sub">Configure Claude subscriptions, data paths, and projects.</p>
   <p style="font-size:12px;color:var(--text-tertiary);margin:-4px 0 16px 0;font-family:var(--sans)">config.py sets initial account configuration on first run. After first run, accounts are managed here. Changes to config.py after first run have no effect.</p>
 
   <div class="msg-zone" id="msg"></div>
@@ -569,7 +474,6 @@ function authHeaders() {
 // ── App ─────────────────────────────────────────────────────────
 (function() {
   let accounts = [];
-  let browserAccounts = {};
   let editingId = null;
 
   const $ = (id) => document.getElementById(id);
@@ -602,10 +506,6 @@ function authHeaders() {
   function load() {
     fetch('/api/accounts').then(r => r.json()).then(data => {
       accounts = data || [];
-      return fetch('/api/claude-ai/accounts').then(r => r.json());
-    }).then(ba => {
-      browserAccounts = {};
-      (ba || []).forEach(a => { browserAccounts[a.account_id] = a; });
       renderList();
     }).catch(() => { renderList(); });
   }
@@ -664,84 +564,12 @@ function authHeaders() {
             projs.map(p => '<span class="proj-pill">' + esc(p.project_name) + '</span>').join('') +
           '</div>' : '') +
 
-        renderBrowser(a.account_id) +
-
         '<div class="delete-confirm" id="del-' + esc(a.account_id) + '">' +
           '<p>This hides the account from the dashboard but keeps all session data.</p>' +
           '<div class="actions">' +
             '<button class="btn-danger" data-confirm-delete="' + esc(a.account_id) + '">Confirm delete</button>' +
             '<button class="btn-ghost" data-cancel-delete="' + esc(a.account_id) + '">Cancel</button>' +
           '</div>' +
-        '</div>' +
-      '</div>'
-    );
-  }
-
-  function renderBrowser(accountId) {
-    const ba = browserAccounts[accountId];
-    const status = ba ? ba.status : 'unconfigured';
-    const snap = ba ? ba.latest_snapshot : null;
-    const lastPolled = ba ? ba.last_polled : null;
-    const plan = ba ? ba.plan : 'max';
-    const pollAgo = lastPolled ? timeAgo(lastPolled) : 'never';
-
-    let body = '';
-    if (status === 'unconfigured') {
-      body =
-        '<div class="browser-row">Not connected — add a session key to track claude.ai window burn.</div>' +
-        '<div class="browser-actions">' +
-          '<button class="btn-primary" data-setup="' + esc(accountId) + '">Connect claude.ai</button>' +
-        '</div>';
-    } else if (status === 'expired') {
-      body =
-        '<div class="browser-row">Session expired · last polled ' + esc(pollAgo) + '</div>' +
-        '<div class="browser-actions">' +
-          '<button class="btn-primary" data-setup="' + esc(accountId) + '">Reconnect</button>' +
-          '<button class="btn-danger" data-clear-session="' + esc(accountId) + '">Remove</button>' +
-        '</div>';
-    } else if (status === 'active' && snap) {
-      const usage = plan === 'pro' && snap.messages_limit
-        ? snap.messages_used + '/' + snap.messages_limit + ' messages'
-        : (snap.pct_used || 0).toFixed(1) + '% window used';
-      let overageBar = '';
-      if (snap.extra_credits_limit > 0) {
-        // Anthropic returns extra_credits in cents (e.g. 2136 = $21.36).
-        const oUsed = snap.extra_credits_used || 0;
-        const oLim = snap.extra_credits_limit;
-        const oPct = (oUsed / oLim) * 100;
-        overageBar =
-          '<div class="bar-label" style="margin-top:10px">claude.ai overage — $' + (oUsed / 100).toFixed(2) + ' / $' + (oLim / 100).toFixed(2) + ' (' + fmtPct(oPct) + ')</div>' +
-          '<div class="bar-track"><div class="bar-fill ' + windowClass(oPct) + '" style="width:' + Math.min(oPct, 100) + '%"></div></div>';
-      }
-      body =
-        '<div class="browser-row"><span class="val">' + esc(usage) + '</span> · last polled ' + esc(pollAgo) + '</div>' +
-        overageBar +
-        '<div class="browser-actions">' +
-          '<button class="btn-ghost" data-refresh-browser="' + esc(accountId) + '">Refresh</button>' +
-          '<button class="btn-danger" data-clear-session="' + esc(accountId) + '">Remove session</button>' +
-        '</div>';
-    } else {
-      body = '<div class="browser-row">' + esc(status) + '</div>';
-    }
-
-    return (
-      '<div class="browser-card">' +
-        '<div class="browser-head">' +
-          '<span class="browser-title">claude.ai browser</span>' +
-          '<span class="browser-status">' + esc(status) + '</span>' +
-        '</div>' +
-        body +
-        '<div class="setup-steps" id="setup-' + esc(accountId) + '">' +
-          '<div class="step done"><div class="step-dot">✓</div><div>Log into claude.ai in Chrome or Vivaldi on your Mac</div></div>' +
-          '<div class="step"><div class="step-dot">1</div><div>Open DevTools → Application → Cookies → https://claude.ai, copy the <b>sessionKey</b> value</div></div>' +
-          '<div class="step"><div class="step-dot">2</div><div>Paste it below and click Verify. Your key is stored only on this server.</div></div>' +
-          '<div class="setup-input">' +
-            '<input type="password" id="sk-' + esc(accountId) + '" placeholder="sk-ant-sid01-..." autocomplete="off">' +
-            '<button class="btn-primary" data-verify-setup="' + esc(accountId) + '">Verify</button>' +
-            '<button class="btn-ghost" data-cancel-setup="' + esc(accountId) + '">Cancel</button>' +
-          '</div>' +
-          '<div id="setup-result-' + esc(accountId) + '"></div>' +
-          '<div class="security-note">Session keys are plaintext in the SQLite DB. Clear them with Remove session when you\'re done.</div>' +
         '</div>' +
       '</div>'
     );
@@ -830,50 +658,6 @@ function authHeaders() {
     document.querySelectorAll('[data-cancel-delete]').forEach(b => b.addEventListener('click', () => {
       const el = $('del-' + b.dataset.cancelDelete);
       if (el) el.classList.remove('open');
-    }));
-    document.querySelectorAll('[data-setup]').forEach(b => b.addEventListener('click', () => {
-      const el = $('setup-' + b.dataset.setup);
-      if (el) el.classList.add('open');
-    }));
-    document.querySelectorAll('[data-cancel-setup]').forEach(b => b.addEventListener('click', () => {
-      const el = $('setup-' + b.dataset.cancelSetup);
-      if (el) el.classList.remove('open');
-    }));
-    document.querySelectorAll('[data-verify-setup]').forEach(b => b.addEventListener('click', () => {
-      const id = b.dataset.verifySetup;
-      const sk = $('sk-' + id).value.trim();
-      const res = $('setup-result-' + id);
-      if (!sk) { res.innerHTML = '<div class="setup-result fail">Paste your session key first.</div>'; return; }
-      b.textContent = 'Verifying…'; b.disabled = true;
-      fetch('/api/claude-ai/accounts/' + id + '/setup', {
-        method: 'POST', headers: authHeaders(),
-        body: JSON.stringify({session_key: sk})
-      }).then(r => r.json()).then(resp => {
-        b.textContent = 'Verify'; b.disabled = false;
-        if (resp.success) {
-          res.innerHTML = '<div class="setup-result ok">Connected — ' + esc(resp.label) + ', ' + (resp.pct_used || 0).toFixed(1) + '% window used</div>';
-          setTimeout(load, 1500);
-        } else {
-          res.innerHTML = '<div class="setup-result fail">' + esc(resp.error || 'Verification failed') + '</div>';
-        }
-      }).catch(() => {
-        b.textContent = 'Verify'; b.disabled = false;
-        res.innerHTML = '<div class="setup-result fail">Network error</div>';
-      });
-    }));
-    document.querySelectorAll('[data-refresh-browser]').forEach(b => b.addEventListener('click', () => {
-      const id = b.dataset.refreshBrowser;
-      b.textContent = 'Refreshing…'; b.disabled = true;
-      fetch('/api/claude-ai/accounts/' + id + '/refresh', {method: 'POST', headers: authHeaders()})
-        .then(r => r.json())
-        .then(resp => { b.textContent = 'Refresh'; b.disabled = false; showMsg(resp.success ? 'Refreshed' : 'Refresh failed', resp.success ? 'success' : 'error'); load(); });
-    }));
-    document.querySelectorAll('[data-clear-session]').forEach(b => b.addEventListener('click', () => {
-      const id = b.dataset.clearSession;
-      if (!confirm('Remove the session key for ' + id + '?')) return;
-      fetch('/api/claude-ai/accounts/' + id + '/session', {method: 'DELETE', headers: authHeaders()})
-        .then(r => r.json())
-        .then(() => { showMsg('Session cleared for ' + id, 'success'); load(); });
     }));
   }
 
