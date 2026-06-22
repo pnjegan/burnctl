@@ -81,6 +81,27 @@ of truth.
 
 ---
 
+## SHOWCASE PLAN — claim only what's built
+
+Anti-inflated-claim rule: a story is showcasable **only after its matching
+artifact/phase lands**. Until then it stays here as a plan, not a claim.
+
+1. **Decay-test / prune story** — *claimable ON COMPLETION.* **Ship first.**
+   This is build-to-delete *demonstrated*. Receipt to publish:
+   before/after of dead weight removed (dormant `fetch_org_id`, ~61 dead
+   skills, orphaned helpers `timeAgo`/`windowClass`/`fmtPct`, `CLAUDE.md`
+   slimmed) **plus** a "quality didn't drop" measurement. No claim until the
+   prune is done and the receipt exists.
+
+2. **Self-improving product loop** — *HEADLINE, claimable in stages.* Do NOT
+   showcase a stage before the matching phase lands (inflated-claim trap):
+   - after **Phase 1 backtest** agrees with the 8-fix history →
+     claim *"reward signal validated"*.
+   - after **Phase 3** closes →
+     claim *"burnctl self-improves, bounded by hard gates"*.
+
+---
+
 ## Loop log (newest first)
 
 - **G1.6 / G1.6b** (DB data-op, 2026-06-22) — STATE-1 scan found
