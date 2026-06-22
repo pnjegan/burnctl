@@ -8,6 +8,11 @@ This file is the **canonical, tracked** harness state. See *versioning
 policy* below: `.claude/commands/goals.md` is a deployed copy, not the source
 of truth.
 
+> **#1 OPEN — PUSH STATUS:** all `v5.0-session-1` commits are **LOCAL only**
+> (nothing pushed). Blocked on the `unitedappsmaker-tech` vs `pnjegan` auth
+> mismatch **plus** a deliberate decision on what reaches public history.
+> "Done" in this file means **done locally** — not published.
+
 ---
 
 ## Verdicts (with evidence pointers)
@@ -59,6 +64,20 @@ of truth.
 - **`claude_ai_tracker.py` still imports `fetch_org_id`** — the dormant
   harvester for the `org_id` just NULL-wiped in G1.6b. No caller today.
   **Do NOT rewire it.** Candidate for removal in a later cleanup pass.
+
+### Harness audit vs canonical 5-layer model (this session — three misses, not yet acted on)
+
+- **BUILD-TO-DELETE missing** — the harness accumulates, never prunes. In-repo
+  evidence: `CLAUDE.md` 164 lines (bloated), 86 global skills (~61 dead,
+  ~3k tok/turn), orphaned helpers (`timeAgo` / `windowClass` / `fmtPct`),
+  the dormant `fetch_org_id` import, the stale `goal.md`. No decay test run.
+- **LAYER 4 GAP (guardrails)** — a loop-iteration cap exists, but there is
+  **no token/budget guardrail that halts a runaway**. burnctl *sees* waste
+  (Layer 5) but cannot *fence* spend. The 502 storm was a symptom.
+- **LAYER 2 (tools)** — skill tax was *measured* in G-AUDIT but not *acted on*.
+  Prune candidate.
+- **Strong layers:** Layer 1 (SESSION-STATE / goals), Layer 3 (G5 mechanical
+  gate — ahead of baseline), Layer 5 (the product itself).
 
 ---
 
