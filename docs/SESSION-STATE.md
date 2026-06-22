@@ -20,11 +20,10 @@ of truth.
 | G-AUDIT  | **done**                    | `AUDIT.md` | skills / md / maturity inventory |
 | Commit 1 | **done**                    | `5c1d609` | harness spec (`burnctl-headroom-harness.md`) versioned |
 | G5       | **PASS**                    | `2121f29` | banned-string gate; E-banned now **L3-mechanical** |
+| G1.6     | **DONE (FOUND)**            | DB data-op 2026-06-22 | STATE-1 scan found 1 harvested-identifier column with real values: `claude_ai_accounts.org_id` (2 claude.ai org UUIDs). `raw_response` identifier-free; `account_id`/`label` are local self-assigned nicknames (left as-is); `session_key` already NULL |
+| G1.6b    | **DONE**                    | DB data-op 2026-06-22 | STATE-3 NULL-wipe of `org_id` on the 2 stale rows (by rowid 1 & 2, NULL not `''`), atomic txn + pre-commit asserts + fresh read-back. Post: org_id non-null=0, rows still 2, account_id/label untouched, `session_key` re-verified NULL. Re-scan: zero harvested identifiers remain in either table |
 
 **Open (not yet verified):**
-- **G1.6** — conditional identifier wipe (read stale `claude_ai_accounts` /
-  `claude_ai_snapshots` for harvested identifiers beyond `session_key`;
-  STATE-3 wipe + read-back if present). Security-closure, non-gating.
 - **G2** — headroom full-adoption harness.
 - **G3** — credit-pool burn-down tracker.
 - **G4** — net-vs-gross headroom auditor.
@@ -55,8 +54,21 @@ of truth.
 
 ---
 
+## Backlog (non-gating)
+
+- **`claude_ai_tracker.py` still imports `fetch_org_id`** — the dormant
+  harvester for the `org_id` just NULL-wiped in G1.6b. No caller today.
+  **Do NOT rewire it.** Candidate for removal in a later cleanup pass.
+
+---
+
 ## Loop log (newest first)
 
+- **G1.6 / G1.6b** (DB data-op, 2026-06-22) — STATE-1 scan found
+  `claude_ai_accounts.org_id` holding 2 real claude.ai org UUIDs (stale
+  pre-v5 polling residue; no current writer). STATE-3 NULL-wiped both by
+  rowid with atomic txn + read-back; re-scan clean, `session_key` wipe
+  re-verified. No code commit (data-only); SESSION-STATE.md updated.
 - **G5 / Commit 2** (`2121f29`) — added `tools/check_banned_strings.py`
   (self-contained allowlist, git-scoped), wired into `daily_qa.py`
   (DOD→exit 2 blocks publish) + tracked `hooks/pre-commit`. Verified green on
