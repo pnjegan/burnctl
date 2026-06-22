@@ -28,6 +28,44 @@ of truth.
 | G1.6     | **DONE (FOUND)**            | DB data-op 2026-06-22 | STATE-1 scan found 1 harvested-identifier column with real values: `claude_ai_accounts.org_id` (2 claude.ai org UUIDs). `raw_response` identifier-free; `account_id`/`label` are local self-assigned nicknames (left as-is); `session_key` already NULL |
 | G1.6b    | **DONE**                    | DB data-op 2026-06-22 | STATE-3 NULL-wipe of `org_id` on the 2 stale rows (by rowid 1 & 2, NULL not `''`), atomic txn + pre-commit asserts + fresh read-back. Post: org_id non-null=0, rows still 2, account_id/label untouched, `session_key` re-verified NULL. Re-scan: zero harvested identifiers remain in either table |
 | G2-STEP0 | **502 KILL — PASS / cold-start residual** | proxy `/stats` 2026-06-22 | headroom proxy 502 storm fixed via config only (no burnctl code). See block below for proven-vs-pending |
+| CIC (cluster #1) | **DETECTOR built — PASS** | `4880d7d` | `cost_anomaly` spend detector (gap-doc cluster #1). Surface-only, no enforcement. Backtest-tuned on live usage.db. Cluster #1 GAP→detected. See block below |
+
+### CIC — cost_anomaly spend detector (gap-doc cluster #1; NOT on original G-board)
+
+**Framing:** DETECTOR, not enforcer. v1 flags + records evidence in `waste_events`;
+it does **not** pause/kill/block/throttle any spend (enforcement is explicitly out of
+scope — belongs to Tether). Verified by construction: no stop/kill/throttle path in the code.
+
+**Rules (tuned against the real 363-session usage.db, 2026-06-22):**
+- **r1** cost > median + 8·MAD of trailing-7d session costs **AND** cost ≥ $300. Robust
+  median+MAD chosen because the spec's plain "3× median" flagged **27.8%** of real history
+  (bimodal distribution: tiny-median + fat-tail); median+8·MAD@$300 → **3.6%** (13 sessions).
+  *User chose this threshold at the STATE-2 tuning checkpoint over 3 alternatives.*
+- **r2** weekly spend > 2× prior week on Anthropic's Thu-06:00-UTC reset cadence, prior week
+  ≥ $860 (a quiet-week recovery is not a spike). On real data fired on 1 week (wk42,
+  $1904→$4305) whose top session was already an r1 outlier → folds into that one flag.
+- **r3** cost ≥ $20 **AND** output_tokens < 3000 — spend-without-output stuck-loop guard
+  (GH #57719). Floors raised from the gap-doc's unusable `out<100` (0 real sessions have
+  near-zero output; p10 = 3,242 tok). 0 flags on this history = correct forward guard.
+- **insufficient_baseline** reported (NOT flagged) when trailing-7d history < 5 sessions: 5 sessions.
+
+**PROVEN NOW (ground truth, not a banner):** read-only run on real usage.db → 13 r1 flags,
+r2 folds into an r1 session, 0 r3, 5 insufficient-baseline, **350/363 sessions quiet**, all
+severity red. Write path verified on a DB copy: atomic write, **read-back by rowid** (sample
+rowid round-trips with evidence), **idempotent** UPSERT (2nd run still 13, no dupes), ADD-only
+(cost_outlier/floundering/etc. untouched). py_compile clean; **G5 gate green**.
+
+**Status move:** gap-doc **cluster #1 GAP → detected** (burnctl now HAS the spend detector
+Anthropic declined to build — #57719/#55144 closed-not-planned).
+
+**PENDING / honest scope:**
+- Not yet run against production `waste_events` — populates on the next real `detect_all` scan
+  (correctness proven on a copy; prod write is a normal scan, not a code change).
+- **Showcase copy stays PLANNED-tense** until this ships to npm (per discipline). The detector
+  exists and is verified locally; it is not yet in a published release.
+- This history contains **no genuine phantom-billing incident** — r1's flags here are large
+  legitimate sessions, not runaway-cost events. The detector is validated structurally + on the
+  weekly/guard rules; a true #68285-class event would light up r1 far harder (235× seen).
 
 ### G2 STEP 0 — headroom 502 fix (config-only; STEP 0 of G2, adoption checklist NOT started)
 
@@ -146,6 +184,13 @@ artifact/phase lands**. Until then it stays here as a plan, not a claim.
 
 ## Loop log (newest first)
 
+- **CIC / cost_anomaly detector** (`4880d7d`, 2026-06-22) — built gap-doc cluster #1: a
+  surface-only spend detector (`cost_anomaly` waste pattern). STATE-2 backtest on live
+  usage.db showed the spec'd "3× median" was noise (27.8%); user picked robust median+8·MAD
+  @ $300 (3.6%, 13 flags) at the tuning checkpoint. r2 (weekly accel) + r3 (spend-without-output
+  guard) kept; r3 floors recalibrated to real data (0 flags = correct guard). No enforcement
+  path. Verified: rowid read-back, idempotent UPSERT, ADD-only, 350/363 quiet, G5 green. Two
+  commits (code + this doc), no push. Cluster #1 GAP→detected. Showcase stays PLANNED until npm.
 - **G2 STEP 0** (config-only, 2026-06-22) — fixed headroom proxy 502 storm. Root cause:
   `cc()`→`headroom wrap` default `agent-90` profile forced `force_kompress` → 30s ML stall →
   502 on ~120k cache-miss turns. Fix: `.bashrc` cc() + tmux daemon → `balanced` profile +
