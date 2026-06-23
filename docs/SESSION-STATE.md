@@ -59,8 +59,10 @@ rowid round-trips with evidence), **idempotent** UPSERT (2nd run still 13, no du
 Anthropic declined to build — #57719/#55144 closed-not-planned).
 
 **PENDING / honest scope:**
-- Not yet run against production `waste_events` — populates on the next real `detect_all` scan
-  (correctness proven on a copy; prod write is a normal scan, not a code change).
+- ~~Not yet run against production~~ **DONE 2026-06-23**: `detect_all()` run against prod
+  `usage.db` (incremental) → 13 cost_anomaly rows persisted (all red, evidence intact),
+  read-back by rowid (ids 1151928–1151938), other patterns unchanged (rr 94 / deep 81 /
+  cost_outlier 48 / fl 10 / bc 1). Pre-write backup at `/tmp/usage.db.bak-pre-cost_anomaly-2026-06-23`.
 - **Showcase copy stays PLANNED-tense** until this ships to npm (per discipline). The detector
   exists and is verified locally; it is not yet in a published release.
 - This history contains **no genuine phantom-billing incident** — r1's flags here are large
