@@ -31,6 +31,7 @@ of truth.
 | G2-STEP0 | **502 KILL — PASS / cold-start residual** | proxy `/stats` 2026-06-22 | headroom proxy 502 storm fixed via config only (no burnctl code). See block below for proven-vs-pending |
 | CIC (cluster #1) | **DETECTOR built — PASS** | `4880d7d` | `cost_anomaly` spend detector (gap-doc cluster #1). Surface-only, no enforcement. Backtest-tuned on live usage.db. Cluster #1 GAP→detected. See block below |
 | UNVAL-AUDIT | **DONE — V1–V3 locked + injection-verified** | `06d7e62`,`012e9cd` | Classified every done-but-unverified claim (read-only `docs/UNVALIDATED_AUDIT.md`). VERIFIABLE V1–V3 (cost_anomaly detector-contract: baseline-reports-not-flags, r3-floors-are-real-boundaries, surface-only/no-enforcement) locked in `tests/test_cost_anomaly_contract.py` and each criterion **proven to go red on injected breakage** (guard weakened→below-baseline candidate flags; r3 `<`→`<=`→floor-case flags; flag grows `action:throttle`→rejected) while the real detector stays green (13/13). V4–V6 honestly deferred (DB-write/persist path); J1–J4 = human-judgment; X1–X6 = SENSITIVE, permanently human-gated, EXCLUDED from any future worker→verifier loop |
+| WRITE-CONTRACT (V4/V5) | **DONE — write path locked + fault-verified** | `6a1233f` | The `waste_events` write-path bucket UNVAL-AUDIT deferred (V4/V5) is now re-runnable: `tests/test_waste_events_contract.py`. **Calls the real write** (`db.insert_waste_event` @ `db.py:1033`), never reimplements it; real schema via `db.init_db()` into a TEMP SQLite (never prod); idempotency key read from live schema via PRAGMA (survives schema-add). **V4** same key twice→exactly one row + UPSERT reflects re-write · **V5a** every insert confirmed by rowid read-back, absence caught (the swallow quirk: `insert_waste_event` has no try/except but every caller swallows to stderr → read-back is the only catch) · **V5b** new write leaves existing rows byte-identical + same-key re-write preserves rowid (no destructive delete+reinsert). Real path **8/8 green**; faulted-copy reruns in scratchpad — **A** UPSERT→plain INSERT→red, **B** silent no-op→red, **C** destructive rewrite→red (each criterion reds under its intended fault). **V6 still deferred** (G1 JSONL-scan surface; NOT bundled). **Reproduce:** `cd ~/projects/burnctl && PYTHONPATH=~/projects/burnctl python3 -m unittest tests.test_waste_events_contract -v` (faulted negatives: copy `db.py` to a scratch dir, fault `insert_waste_event`, re-run the module from that dir with burnctl on PYTHONPATH) |
 
 ### CIC — cost_anomaly spend detector (gap-doc cluster #1; NOT on original G-board)
 
@@ -187,6 +188,15 @@ artifact/phase lands**. Until then it stays here as a plan, not a claim.
 ---
 
 ## Loop log (newest first)
+
+- **WRITE-CONTRACT V4/V5** (`6a1233f`, 2026-06-23) — locked the `waste_events`
+  write-path contract UNVAL-AUDIT deferred. `tests/test_waste_events_contract.py`
+  calls the real `db.insert_waste_event` (idempotent UPSERT / rowid read-back /
+  ADD-only), schema from real `db.init_db()` into a TEMP SQLite (never prod), key
+  read via PRAGMA. Real path 8/8 green; 3 faulted-copy reruns (UPSERT→plain INSERT,
+  silent no-op, destructive rewrite) each went red for its criterion. STATE-gated:
+  read-only discovery → drafted → fault-verified → test-only commit. G5 green. V6
+  not bundled. No write-path/Guardian/publish/credential code touched.
 
 - **UNVALIDATED-AUDIT + V1–V3 detector-contract criteria** (`06d7e62` audit, `012e9cd`
   criteria, 2026-06-23) — PREREQUISITE for a worker→verifier loop (the loop itself was NOT
