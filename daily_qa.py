@@ -436,6 +436,56 @@ def check_banned_strings():
     return WOW, "0 credential-movement strings in prod paths"
 
 
+def check_cost_anomaly_brake(conn=None):
+    """Self-brake: refuse to ship burnctl while a spend runaway is hot.
+
+    Returns DOD — which makes the mandatory pre-publish gate exit 2 and block
+    the publish — when a RED cost_anomaly flag sits on a session that was
+    ACTIVE in the last 24h.
+
+    Freshness is keyed to session ACTIVITY, not to detected_at: detect_all
+    re-stamps the same historical flags on every scan, so a detected_at window
+    would brake forever on benign old sessions. A red flag on a session active
+    today = a runaway happening now.
+
+    HARD LINE — detect-not-enforce: this brakes BURNCTL'S OWN pipeline only (a
+    QA exit code that withholds the npm publish). It never pauses, kills, or
+    throttles a Claude Code session. The detector flags; this gate simply
+    declines to ship while a flag is live. Fails safe (DOD) on query error.
+    """
+    own = False
+    if conn is None:
+        try:
+            from db import get_conn
+            conn = get_conn()
+        except Exception as e:
+            return OK, f"brake inert — cannot open DB: {e}"
+        own = True
+    if conn is None:
+        return OK, "brake inert — no usage.db"
+    try:
+        cutoff = int(time.time()) - 86400
+        row = conn.execute(
+            "SELECT COUNT(*) FROM waste_events w "
+            "JOIN (SELECT session_id, MAX(timestamp) AS ts "
+            "      FROM sessions GROUP BY session_id) s "
+            "  ON s.session_id = w.session_id "
+            "WHERE w.pattern_type = 'cost_anomaly' AND w.severity = 'red' "
+            "  AND s.ts >= ?",
+            (cutoff,),
+        ).fetchone()
+        n = row[0] if row else 0
+    except Exception as e:
+        return DOD, f"brake check failed (failing safe): {e}"
+    finally:
+        if own:
+            conn.close()
+    if n > 0:
+        return DOD, (f"{n} red cost_anomaly on session(s) active <24h — "
+                     "burnctl publish HALTED (own pipeline only; CC untouched)")
+    return WOW, "no live runaway — brake clear"
+
+
 TESTS = [
     # npx commands — run from fresh /tmp
     ("audit",            "npx",  "audit",                 score_audit),
@@ -530,6 +580,21 @@ def run_all_tests():
         "name": "banned-strings",
         "kind": "local",
         "arg": "tools/check_banned_strings.scan_violations",
+        "status": status,
+        "evidence": evidence,
+        "exit_code": 0 if status != DOD else 2,
+        "elapsed_sec": round(time.monotonic() - t0, 2),
+        "output_head": evidence[:500],
+    })
+
+    # Cost-anomaly self-brake — withhold the publish while a runaway is live
+    # (red cost_anomaly on a session active <24h). Brakes burnctl only.
+    t0 = time.monotonic()
+    status, evidence = check_cost_anomaly_brake()
+    results.append({
+        "name": "cost-anomaly-brake",
+        "kind": "local",
+        "arg": "red cost_anomaly on session active <24h",
         "status": status,
         "evidence": evidence,
         "exit_code": 0 if status != DOD else 2,
