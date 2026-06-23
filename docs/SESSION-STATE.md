@@ -29,6 +29,7 @@ of truth.
 | G1.6b    | **DONE**                    | DB data-op 2026-06-22 | STATE-3 NULL-wipe of `org_id` on the 2 stale rows (by rowid 1 & 2, NULL not `''`), atomic txn + pre-commit asserts + fresh read-back. Post: org_id non-null=0, rows still 2, account_id/label untouched, `session_key` re-verified NULL. Re-scan: zero harvested identifiers remain in either table |
 | G2-STEP0 | **502 KILL — PASS / cold-start residual** | proxy `/stats` 2026-06-22 | headroom proxy 502 storm fixed via config only (no burnctl code). See block below for proven-vs-pending |
 | CIC (cluster #1) | **DETECTOR built — PASS** | `4880d7d` | `cost_anomaly` spend detector (gap-doc cluster #1). Surface-only, no enforcement. Backtest-tuned on live usage.db. Cluster #1 GAP→detected. See block below |
+| UNVAL-AUDIT | **DONE — V1–V3 locked + injection-verified** | `06d7e62`,`012e9cd` | Classified every done-but-unverified claim (read-only `docs/UNVALIDATED_AUDIT.md`). VERIFIABLE V1–V3 (cost_anomaly detector-contract: baseline-reports-not-flags, r3-floors-are-real-boundaries, surface-only/no-enforcement) locked in `tests/test_cost_anomaly_contract.py` and each criterion **proven to go red on injected breakage** (guard weakened→below-baseline candidate flags; r3 `<`→`<=`→floor-case flags; flag grows `action:throttle`→rejected) while the real detector stays green (13/13). V4–V6 honestly deferred (DB-write/persist path); J1–J4 = human-judgment; X1–X6 = SENSITIVE, permanently human-gated, EXCLUDED from any future worker→verifier loop |
 
 ### CIC — cost_anomaly spend detector (gap-doc cluster #1; NOT on original G-board)
 
@@ -186,6 +187,19 @@ artifact/phase lands**. Until then it stays here as a plan, not a claim.
 
 ## Loop log (newest first)
 
+- **UNVALIDATED-AUDIT + V1–V3 detector-contract criteria** (`06d7e62` audit, `012e9cd`
+  criteria, 2026-06-23) — PREREQUISITE for a worker→verifier loop (the loop itself was NOT
+  built). Read past sessions/commits/tests and classified every "done" claim with no
+  independent check: **VERIFIABLE** V1–V3 → committed executable criteria; **V4–V6** →
+  real future criteria, honestly left unbuilt (touch the `waste_events` DB-write path);
+  **J1–J4** → human-judgment, not automatable; **X1–X6** → SENSITIVE (credential / publish /
+  G5 banned-string gate / harvested-id wipe / auth), EXCLUDED from any autonomous loop,
+  human-gated permanently. Locked V1–V3 in `tests/test_cost_anomaly_contract.py` (13 tests
+  incl. positive cases). REFLECT/verify pass 2026-06-23: re-ran the suite green, then
+  re-proved each criterion fails on **injected** breakage against a faulted *copy* of
+  `waste_patterns.py` in scratchpad — **no product code touched** (cwd-shadow trap noted: an
+  isolated copy pulled the wrong project's `db.py`; corrected by running from the faulted dir
+  with burnctl on `PYTHONPATH`). Detector contract holds; criteria are non-vacuous.
 - **CIC / cost_anomaly detector** (`4880d7d`, 2026-06-22) — built gap-doc cluster #1: a
   surface-only spend detector (`cost_anomaly` waste pattern). STATE-2 backtest on live
   usage.db showed the spec'd "3× median" was noise (27.8%); user picked robust median+8·MAD
