@@ -8,10 +8,17 @@ This file is the **canonical, tracked** harness state. See *versioning
 policy* below: `.claude/commands/goals.md` is a deployed copy, not the source
 of truth.
 
-> **#1 OPEN — PUSH STATUS:** all `v5.0-session-1` commits are **LOCAL only**
-> (nothing pushed). Blocked on the `unitedappsmaker-tech` vs `pnjegan` auth
-> mismatch **plus** a deliberate decision on what reaches public history.
-> "Done" in this file means **done locally** — not published.
+> **#1 PUSH STATUS (corrected 2026-06-25, was overstated as "nothing pushed"):**
+> the `v5.0-session-1` branch **IS published** to `origin`
+> (`https://github.com/pnjegan/burnctl.git`); `git ls-remote` shows
+> `refs/heads/v5.0-session-1` on GitHub. Push is **NOT blocked** — the remote is
+> **HTTPS**, fetch/ls-remote succeed, so the `unitedappsmaker-tech` vs `pnjegan`
+> **SSH** identity mismatch is **moot** for this remote. Public history holds the
+> cut-feature **CODE** but **no secret values** (G5 gate: 0 banned strings;
+> `claude_ai_accounts` org_id/session_key clean). Only the latest few commits are
+> currently **ahead of the remote locally** — pushing them is a deliberate choice,
+> not a block. The real open question is what reaches **`main`/public history**,
+> not "can we push." "Done" here still means **done + locally committed**.
 
 ---
 
