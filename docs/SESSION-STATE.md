@@ -312,3 +312,24 @@ artifact/phase lands**. Until then it stays here as a plan, not a claim.
   $642.77 vs $524.85) — data moved since authoring; internally consistent now. Template is
   read per-request (`_serve_template`), so no pm2 restart needed; new markup verified live
   via curl. One concern per commit, no push.
+- **STATUSLINE-PROJECT-GAUGE** (Session 58, 2026-06-25, `5b7de04`) — shipped the
+  project-aware live context gauge: the one real-time feature HUD/ccstatusline can't
+  match, because it needs per-project churn history and burnctl has it. Make-or-break
+  verified first: CC's statusline stdin DOES carry `context_window.used_percentage`
+  (int 0-100, null early) per docs.claude.com (claude-code-guide, cited) — so the %
+  is **real, not estimated**. `cli.py cmd_statusline` now reads stdin JSON →
+  `burn_rate.statusline_gauge`. Renders `[model] PROJECT ctx XX% <bar> <state>
+  [· PROJECT avg N compact/sess]`; thresholds <50/50-69 ⚠/>=70 🔴 → /clear; bar fill
+  clamped ≤100% (130% case → 10 blocks, true "130%" kept). Project via real
+  `scanner.resolve_project` + cached DB map. **Nudge** = avg compactions/session 30d
+  from canonical `lifecycle_events` (event_type='compact'), the insights.py signal.
+  **Hand-SELECT match (cited):** Tidify 11 compacts / 4 sess = 2.8 == rendered 2.8;
+  burnctl 15/72 = 0.2 == rendered 0.2. Unknown dir → "Other", plain gauge, NO nudge
+  (never fabricates); ctx<50 → no nudge, no DB. **No per-tick DB (proven):** gauge is
+  stdin-only; project-map + history TTL-cached (`~/.burnctl/cache/statusline_history.json`,
+  30-min) and history only read above 50% — monkeypatch counted **0 `sqlite3.connect`
+  across 3 warm ticks**. Detect-not-enforce: display only, never pauses/compacts CC.
+  Dry-run: 7 cases (known red+nudge / known yellow+nudge / unknown degrade / below-floor /
+  null %/ over-limit clamp / manual burn-rate fallback) all correct. README statusline
+  section updated with the wiring snippet. One concern per commit; no push; no test added
+  (verified by dry-run + hand-SELECT + zero-DB harness).
