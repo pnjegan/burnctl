@@ -66,7 +66,16 @@ ACCOUNTS = {
 # take effect on `cli.py scan --reprocess` (which UPSERTs into the
 # account_projects table).
 
-PROJECT_MAP = {}
+PROJECT_MAP = {
+    "WealthOS":    {"keywords": ["wealth-journal", "wealth-tracker"],
+                    "account": "personal_max"},
+    "Narthex":     {"keywords": ["narthex"],
+                    "account": "personal_max"},
+    "Digivault":   {"keywords": ["digivaul"],
+                    "account": "personal_max"},
+    "SocialLearn": {"keywords": ["socialmedialearn"],
+                    "account": "personal_max"},
+}
 
 UNKNOWN_PROJECT = "Other"
 
