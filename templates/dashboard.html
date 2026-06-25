@@ -243,6 +243,21 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 }
 .bar-fill.amber { background: var(--accent-amber); }
 .bar-fill.red   { background: var(--accent-red); }
+/* Over-limit (>100%): bar is clamped to 100% width; stripes signal the
+   fill is maxed AND the real value exceeds the limit — an intentional
+   state, not a render glitch. The true % stays in the stats text. */
+.bar-fill.over {
+  background-image: repeating-linear-gradient(
+    45deg, rgba(255,255,255,0.4) 0 4px, rgba(255,255,255,0) 4px 8px);
+}
+.window-stats .over-tag {
+  color: var(--accent-red);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+  margin-left: 6px;
+}
 
 .window-stats {
   display: flex; gap: 28px;
@@ -1188,7 +1203,8 @@ function authHeaders() {
       if (!w) return '';
 
       const pct = w.window_pct || 0;
-      const cls = windowClass(pct);
+      const overLimit = pct > 100;
+      const cls = windowClass(pct) + (overLimit ? ' over' : '');
       const total = w.total_tokens || 0;
       const lim = w.tokens_limit || 0;
       const burn = w.burn_per_minute || 0;
@@ -1217,7 +1233,7 @@ function authHeaders() {
           '</div>' +
           (lim > 0 ? '<div class="bar-track"><div class="bar-fill ' + cls + '" style="width:' + Math.min(pct, 100) + '%"></div></div>' : '') +
           (lim > 0 ? '<div class="window-stats">' +
-            '<span><span class="val">' + fmtPct(pct) + '</span> used</span>' +
+            '<span><span class="val">' + fmtPct(pct) + '</span> used' + (overLimit ? '<span class="over-tag">over limit</span>' : '') + '</span>' +
             '<span><span class="val">' + fmtNum(Math.round(burn)) + '</span> tok/min</span>' +
             '<span>resets <span class="val">' + esc(reset) + '</span></span>' +
             '<span><span class="val">' + fmtNum(total) + '</span> / ' + fmtNum(lim) + '</span>' +
@@ -2224,7 +2240,9 @@ function authHeaders() {
       if (baseline.available) {
         html += '<div><div style="opacity:0.6; font-size:11px; margin-bottom:2px;">OVERHEAD</div>' +
                 '<div style="font-size:18px;">' + (baseline.tokens || 0).toLocaleString() + ' tok' +
-                _deltaBadge(baseline.delta_pct) + '</div></div>';
+                _deltaBadge(baseline.delta_pct) + '</div>' +
+                (baseline.delta_pct != null ? '<div style="opacity:0.5; font-size:10px; margin-top:2px;">vs previous scan</div>' : '') +
+                '</div>';
       } else {
         html += '<div><div style="opacity:0.6; font-size:11px; margin-bottom:2px;">OVERHEAD</div>' +
                 '<div style="font-size:13px; opacity:0.7;">(first scan pending)</div></div>';
@@ -2233,7 +2251,9 @@ function authHeaders() {
       if (runtime.available) {
         html += '<div><div style="opacity:0.6; font-size:11px; margin-bottom:2px;">RUNTIME BURN</div>' +
                 '<div style="font-size:18px;">' + (runtime.tokens || 0).toLocaleString() + ' tok' +
-                _deltaBadge(runtime.dod_pct) + '</div></div>';
+                _deltaBadge(runtime.dod_pct) + '</div>' +
+                (runtime.dod_pct != null ? '<div style="opacity:0.5; font-size:10px; margin-top:2px;">vs yesterday</div>' : '') +
+                '</div>';
       } else {
         html += '<div><div style="opacity:0.6; font-size:11px; margin-bottom:2px;">RUNTIME BURN</div>' +
                 '<div style="font-size:13px; opacity:0.7;">(data unavailable)</div></div>';
