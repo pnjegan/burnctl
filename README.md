@@ -230,7 +230,7 @@ burnctl subagent-audit  # subagent cost split per project
 burnctl overhead-audit  # session startup overhead trend
 burnctl compact-audit   # compaction rate per project
 burnctl variance [proj] # per-project cost variance with root-cause diagnosis
-burnctl statusline      # one-line output for Claude Code statusline hook
+burnctl statusline      # project-aware live context gauge for the CC statusline hook
 burnctl scan            # one-shot scan of new JSONL sessions
 burnctl waste           # waste-pattern detector summary
 burnctl backup          # hot-copy DB + JSON fixes export
@@ -271,7 +271,32 @@ Add to `~/.claude/settings.json` (or per-project `.claude/settings.json`):
 }
 ```
 
-Then your Claude Code statusline shows live burn whenever you're working.
+Claude Code pipes a JSON payload to the command on stdin (model, working
+directory, and its **native** `context_window.used_percentage`). burnctl
+renders a live, **project-aware** context gauge from that field:
+
+```
+[Opus 4.8] Tidify ctx 72% ███████░░░ 🔴 → /clear · Tidify avg 2.8 compact/sess
+```
+
+- **Real context %** — straight from Claude Code's own `used_percentage`,
+  not an estimate. Bar fill is clamped to 100%; the true % is always shown.
+- **Threshold gauge** — `<50%` normal · `50–69%` ⚠ · `≥70%` 🔴 with a
+  `→ /clear` cue. Display only: it never pauses, blocks, or compacts CC.
+- **Project-aware nudge** — once context is filling (`≥50%`), it appends how
+  often *this* project has historically compacted, e.g.
+  `Tidify avg 2.8 compact/sess` (avg compactions/session over the last 30d,
+  from your own `usage.db`). This is the one thing a live-only statusline
+  can't show — it needs per-project history, which burnctl already has.
+  Unknown projects or projects with no compaction history fall back to the
+  plain gauge — never a guessed number.
+
+The history read is cached (`~/.burnctl/cache/statusline_history.json`,
+30-min TTL) and only consulted above 50% context, so the ~300ms statusline
+refresh never queries the database on the hot path.
+
+Run `burnctl statusline` manually (no stdin) and it falls back to the
+one-line burn-rate readout (`⚡ t/min | $/hr | 5hr | Loop`).
 
 ---
 

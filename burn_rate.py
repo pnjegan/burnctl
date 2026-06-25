@@ -225,6 +225,180 @@ def statusline(db_path=DB_DEFAULT):
     return f"⚡ {tpm}t/min | ${cph}/hr | 5hr: {block_tok_h} tok / ${block_cost} | Loop: {loop_str}"
 
 
+# ── Project-aware live context gauge (v5.x) ──────────────────────────
+# Claude Code's statusline hook sends its NATIVE context_window.used_percentage
+# on stdin (per CC docs). We render a live gauge straight from that field
+# (zero DB), and — only once context is genuinely filling (>=50%) — append a
+# nudge grounded in THIS project's real compaction history from usage.db.
+# That history is the thing a live-only statusline (HUD/ccstatusline) cannot
+# show: it needs per-project churn data, which burnctl already has.
+#
+# Detect-not-enforce, absolute: the statusline only ever PRINTS. It never
+# pauses, blocks, or compacts CC. No fabrication: if used_percentage is absent
+# we show "--%", and if a project has no history we fall back to the plain
+# gauge — never a guessed number.
+#
+# Perf: the hook fires every ~300ms. The gauge itself touches no DB. The
+# project map and the per-project history are read at most once per TTL and
+# cached to a small JSON file, so sqlite is never opened on the hot path.
+
+_HISTORY_TTL_SEC = 1800   # 30 min — compaction history barely moves intra-session
+_NUDGE_CTX_FLOOR = 50     # only consult the cache/DB once context is filling
+
+
+def _statusline_cache_path():
+    return os.path.expanduser("~/.burnctl/cache/statusline_history.json")
+
+
+def _load_statusline_cache():
+    import json
+    try:
+        with open(_statusline_cache_path()) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_statusline_cache(cache):
+    import json
+    path = _statusline_cache_path()
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            json.dump(cache, f)
+    except OSError:
+        pass
+
+
+def _cached_project_map(db_path=DB_DEFAULT):
+    """Project map (account_projects) read at most once per TTL, then cached.
+
+    Avoids resolve_project()'s default DB open on every 300ms tick.
+    """
+    now = int(time.time())
+    cache = _load_statusline_cache()
+    entry = cache.get("_project_map")
+    if entry and (now - entry.get("computed_at", 0)) < _HISTORY_TTL_SEC:
+        return entry.get("map") or {}
+    mapping = {}
+    try:
+        from db import get_project_map_config
+        mapping = get_project_map_config() or {}
+    except Exception:
+        mapping = {}
+    cache["_project_map"] = {"computed_at": now, "map": mapping}
+    _save_statusline_cache(cache)
+    return mapping
+
+
+def _project_compaction_history(project, db_path=DB_DEFAULT):
+    """Avg compactions/session over 30d for `project`, TTL-cached.
+
+    Returns {"avg", "sessions", "compacts"} or None when there is no usable
+    history (unknown bucket, <2 sessions, or zero compactions). Sources the
+    canonical lifecycle_events compaction log (event_type='compact') — the
+    same signal insights.py uses. Never fabricates.
+    """
+    from config import UNKNOWN_PROJECT
+    if not project or project == UNKNOWN_PROJECT:
+        return None
+
+    now = int(time.time())
+    cache = _load_statusline_cache()
+    hist = cache.get("history") or {}
+    entry = hist.get(project)
+    if entry and (now - entry.get("computed_at", 0)) < _HISTORY_TTL_SEC:
+        return entry.get("value")
+
+    value = None
+    resolved = resolve_db_path(db_path)
+    if resolved and os.path.exists(resolved):
+        cutoff = now - 30 * 86400
+        try:
+            conn = sqlite3.connect(resolved)
+            try:
+                sessions = conn.execute(
+                    "SELECT COUNT(DISTINCT session_id) FROM sessions "
+                    "WHERE project=? AND is_subagent=0 AND timestamp>=?",
+                    (project, cutoff),
+                ).fetchone()[0] or 0
+                compacts = conn.execute(
+                    "SELECT COUNT(*) FROM lifecycle_events "
+                    "WHERE project=? AND event_type='compact' AND timestamp>=?",
+                    (project, cutoff),
+                ).fetchone()[0] or 0
+            finally:
+                conn.close()
+            if sessions >= 2 and compacts > 0:
+                value = {
+                    "avg": round(compacts / sessions, 1),
+                    "sessions": int(sessions),
+                    "compacts": int(compacts),
+                }
+        except sqlite3.Error:
+            value = None
+
+    hist[project] = {"computed_at": now, "value": value}
+    cache["history"] = hist
+    _save_statusline_cache(cache)
+    return value
+
+
+def _ctx_bar(pct, width=10):
+    """Unicode bar; fill clamped to [0, width]. The true % is shown as text."""
+    try:
+        frac = (float(pct) or 0) / 100.0
+    except (TypeError, ValueError):
+        frac = 0.0
+    filled = max(0, min(width, round(frac * width)))
+    return "█" * filled + "░" * (width - filled)
+
+
+def statusline_gauge(payload, db_path=DB_DEFAULT):
+    """Render the project-aware context gauge from a CC statusline stdin dict.
+
+    Format: [model] PROJECT ctx XX% <bar> <state>[ · PROJECT avg N compact/sess]
+    Thresholds: <50 normal · 50-69 ⚠ · >=70 🔴 → /clear. Display only.
+    """
+    payload = payload or {}
+    model = ((payload.get("model") or {}).get("display_name")) or "?"
+    cw = payload.get("context_window") or {}
+    pct = cw.get("used_percentage")
+
+    workspace = payload.get("workspace") or {}
+    current_dir = workspace.get("current_dir") or payload.get("cwd") or ""
+    from config import UNKNOWN_PROJECT
+    try:
+        from scanner import resolve_project
+        project, _account = resolve_project(current_dir, _cached_project_map(db_path))
+    except Exception:
+        project = UNKNOWN_PROJECT
+    proj_label = project or UNKNOWN_PROJECT
+
+    # used_percentage is null before the first API call — show "--", never fake.
+    if pct is None:
+        return f"[{model}] {proj_label} ctx --% {_ctx_bar(0)}"
+    try:
+        pctf = float(pct)
+    except (TypeError, ValueError):
+        return f"[{model}] {proj_label} ctx --% {_ctx_bar(0)}"
+
+    line = f"[{model}] {proj_label} ctx {pctf:.0f}% {_ctx_bar(pctf)}"
+
+    # Threshold state — detect only, never enforce.
+    if pctf >= 70:
+        line += " \U0001F534 → /clear"   # 🔴 → /clear
+    elif pctf >= 50:
+        line += " ⚠"                       # ⚠
+
+    # Project-aware nudge: only when filling AND this project has real history.
+    if pctf >= _NUDGE_CTX_FLOOR:
+        hist = _project_compaction_history(project, db_path)
+        if hist:
+            line += f" · {proj_label} avg {hist['avg']} compact/sess"
+    return line
+
+
 def _print_human(db_path=DB_DEFAULT):
     br = get_burn_rate(db_path)
     block = get_block_status(db_path)

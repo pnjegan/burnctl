@@ -2251,9 +2251,30 @@ def cmd_block():
 
 
 def cmd_statusline():
-    """One-line statusline output for Claude Code statusline hooks."""
-    from burn_rate import statusline
-    print(statusline())
+    """One-line statusline output for Claude Code statusline hooks.
+
+    Claude Code pipes a JSON payload on stdin (model, workspace.current_dir,
+    context_window.used_percentage, ...). When present we render the
+    project-aware live context gauge from that native field. When stdin is
+    empty (manual `burnctl statusline`), fall back to the burn-rate line so
+    the command still works outside the hook.
+    """
+    import sys
+    import json
+    payload = None
+    if not sys.stdin.isatty():
+        try:
+            raw = sys.stdin.read()
+            if raw.strip():
+                payload = json.loads(raw)
+        except (ValueError, OSError):
+            payload = None
+    if payload is not None:
+        from burn_rate import statusline_gauge
+        print(statusline_gauge(payload))
+    else:
+        from burn_rate import statusline
+        print(statusline())
 
 
 def cmd_version_check():
