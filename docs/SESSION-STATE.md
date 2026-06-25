@@ -295,3 +295,20 @@ artifact/phase lands**. Until then it stays here as a plan, not a claim.
 - **Commit 1** (`5c1d609`) — versioned `burnctl-headroom-harness.md`; removed
   the stale `.claude/commands/goal.md` duplicate from the working tree
   (`.claude/` is gitignored, so it was never tracked).
+- **DASH-DISPLAY-INTEGRITY** (Session 58, 2026-06-25, `584c9e8`) — display/label-only
+  pass on `templates/dashboard.html`. NO computed value changed (only a bar fill that
+  was already clamped). **T1** window-utilization bar: fill already `Math.min(pct,100)`;
+  added explicit `>100%` state (`.bar-fill.over` stripe + `over limit` tag) so an
+  over-limit window reads as intentional. Real `122.3% used` text + raw `total / limit`
+  preserved. **T3** anchored the two bare delta badges to their *actual* coded baselines:
+  RUNTIME BURN→"vs yesterday" (`_pct_delta(today,yday)` daily_report.py:129), OVERHEAD→
+  "vs previous scan" (`_pct_delta(total,prev)` daily_report.py:70). DoD-runtime trend was
+  already labeled (untouched). **T2** verify-only — every $ already window-labeled
+  (API EQUIV TODAY / API equiv 30d / Today / "30d cost"); no edit. **Consistency asserts
+  (read-only, live :8080) all PASS, nothing masked:** projects Σ30d == headline30d
+  (7439.70==7439.70, n=7); Today 642.77 ≤ 30d 7439.70 (no all-time $ rendered → N/A leg);
+  RUNTIME badge dod_pct == DoD trend (190.8==190.8); two Today sources agree
+  (642.7669≈642.77). Live values drifted from the goal's snapshot (190.8% vs 213%,
+  $642.77 vs $524.85) — data moved since authoring; internally consistent now. Template is
+  read per-request (`_serve_template`), so no pm2 restart needed; new markup verified live
+  via curl. One concern per commit, no push.
