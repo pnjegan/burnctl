@@ -358,7 +358,7 @@ def statusline_gauge(payload, db_path=DB_DEFAULT):
     """Render the project-aware context gauge from a CC statusline stdin dict.
 
     Format: [model] PROJECT ctx XX% <bar> <state>[ · PROJECT avg N compact/sess]
-    Thresholds: <50 normal · 50-69 ⚠ · >=70 🔴 → /clear. Display only.
+    Thresholds: <50 calm · 50-69 ⚠ wrap soon · 70-84 🔴 /clear · >=85 🛑 /clear NOW. Display only.
     """
     payload = payload or {}
     model = ((payload.get("model") or {}).get("display_name")) or "?"
@@ -386,10 +386,12 @@ def statusline_gauge(payload, db_path=DB_DEFAULT):
     line = f"[{model}] {proj_label} ctx {pctf:.0f}% {_ctx_bar(pctf)}"
 
     # Threshold state — detect only, never enforce.
-    if pctf >= 70:
-        line += " \U0001F534 → /clear"   # 🔴 → /clear
+    if pctf >= 85:
+        line += " \U0001F6D1 /clear NOW"  # 🛑 /clear NOW
+    elif pctf >= 70:
+        line += " \U0001F534 /clear"      # 🔴 /clear
     elif pctf >= 50:
-        line += " ⚠"                       # ⚠
+        line += " ⚠ wrap soon"       # ⚠ wrap soon
 
     # Project-aware nudge: only when filling AND this project has real history.
     if pctf >= _NUDGE_CTX_FLOOR:
