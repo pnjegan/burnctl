@@ -154,3 +154,28 @@ per-project language/dependency histogram, capability-relevance (Case 3) becomes
 and Case 2 can be grounded in shared dependencies rather than semantics. Absent that schema
 change, the honest answer is **stats + structural health, and let native scoping do the
 routing.**
+
+---
+
+## 6. Shipped scope — what was built, what was deliberately NOT (2026-06-26)
+
+**Engine: NOT BUILT (by decision).** No relevance scorer, no new command, no scanner
+schema change. Verdict §5 stands: per-project relevance is not computable
+non-hallucinatorily, and native CC scoping already covers the need.
+
+**What ships as the skill-hygiene story:**
+- **Stats-only archiving** — DEAD / ACTIVE / RARE from real 30d JSONL invocations.
+- **Structural-REVIVE flag** — reuse the bug-hunt structural scan (frontmatter validity +
+  ref existence). Dead **+** broken → flag for human fix-or-archive. Deterministic; no
+  relevance guess. (Catches "good-but-broken," replacing the uncomputable relevance signal.)
+
+**Native config fixes applied this session (live `~/.claude/`, backup + read-back each):**
+| Fix | Change | Verified | Restore |
+|---|---|---|---|
+| FIX 1 | `~/.claude/rules/{tidify,wikiloop,burnctl}.md`: `globs:` → `paths:` (YAML-list form). `globs:` is a Cursor field CC ignores → rules loaded unconditionally; `paths:` is the documented field (code.claude.com/docs/en/memory#path-specific-rules). | read-back: globs gone, paths list intact, bodies byte-identical | `_burnctl-fix1-rules-20260626-145310/` |
+| FIX 2 | finance trio (`earnings-analysis`, `market-context`, `mf-portfolio`): added `name`+`description` frontmatter derived from each body (BUG-1/2/3). | read-back: frontmatter valid, bodies unchanged; descriptions now surfaced | `_burnctl-fix2-trio-20260626-145419/` |
+| FIX 3 | **Keep trio global (no move).** Two wealth repos exist (`/root/wealth-journal` git, `/root/projects/wealth_tracker`); trio are general India-finance research skills backing global `/earnings`,`/mf-review`. Scoping to one repo trades cross-context use for ~130 tok; FIX 2 already fixed their real defect. | n/a (decision) | n/a |
+
+**Restart note:** rules + skill descriptions load at session start; the above take effect in
+the next session. `paths:` rules load lazily on matching-file read — confirm via `/memory`
+in a fresh burnctl session (tidify.md/wikiloop.md should be absent).
