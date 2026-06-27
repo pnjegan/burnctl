@@ -2277,6 +2277,32 @@ def cmd_statusline():
         print(statusline())
 
 
+def cmd_coach():
+    """`burnctl coach [--project X]` — one-line session-end habit teaching.
+
+    Celebration-first, grounded in waste_events counts. No LLM, one aggregate
+    query. Resolves the project from cwd (mirrors statusline) unless --project
+    is given. Prints nothing when silenced or there's nothing worth saying.
+    """
+    import coach as _coach
+    project = None
+    if "--project" in sys.argv:
+        i = sys.argv.index("--project")
+        if i + 1 < len(sys.argv):
+            project = sys.argv[i + 1]
+    if not project:
+        try:
+            from burn_rate import _cached_project_map
+            from scanner import resolve_project
+            project, _account = resolve_project(os.getcwd(), _cached_project_map())
+        except Exception:
+            from config import UNKNOWN_PROJECT
+            project = UNKNOWN_PROJECT
+    line = _coach.coach_line(project)
+    if line:
+        print(line)
+
+
 def cmd_version_check():
     """`burnctl version-check` — flag known-bad Claude Code versions."""
     from version_check import run_version_check
@@ -2385,6 +2411,7 @@ def main():
         "loops": cmd_loops,
         "block": cmd_block,
         "statusline": cmd_statusline,
+        "coach": cmd_coach,
         "audit": cmd_audit,
         "version-check": cmd_version_check,
         "peak-hours": cmd_peak_hours,

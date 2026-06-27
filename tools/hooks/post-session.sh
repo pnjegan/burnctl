@@ -12,4 +12,9 @@ curl -s -X POST "$DASHBOARD_URL/api/scan" \
   -H "X-Dashboard-Key: $KEY" \
   > /dev/null 2>&1
 
+# Coach F1: one-line, celebration-first habit teaching grounded in waste_events.
+# Runs once per session (not per-turn). No LLM; a single aggregate query.
+# Silence with BURNCTL_COACH_SILENT=1. Never blocks — failures are swallowed.
+python3 "$BURNCTL_DIR/cli.py" coach 2>/dev/null || true
+
 echo "[burnctl] Session recorded"
