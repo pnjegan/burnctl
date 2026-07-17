@@ -39,6 +39,12 @@ from db import get_conn, insert_waste_event, clear_waste_events, get_setting, se
 
 # ─── Parameters ──────────────────────────────────────────────────
 
+WASTE_WINDOW_DAYS = 30           # only sessions active in this window are flagged;
+                                 # older sessions are history, not current waste.
+                                 # (detected_at is stamped at scan time, so without
+                                 # this gate every rescan re-stamps months-old
+                                 # sessions back into "recent" waste — the
+                                 # token-cost-inflation bug, 2026-07-17.)
 FLOUNDER_THRESHOLD = 4           # same (tool, input_hash) repeats within the window
 FLOUNDER_WINDOW = 50             # repeats must sit within N consecutive tool calls to count
 REPEATED_READ_THRESHOLD = 3      # same file read N times in one session
@@ -135,6 +141,21 @@ def _file_session_id(filepath):
 
 
 # ─── Pattern detectors ───────────────────────────────────────────
+
+def _attributed_waste(session_cost, redundant_calls, total_calls):
+    """Fraction of the session's cost attributable to redundant calls.
+
+    waste_events.token_cost must hold the estimated WASTED cost of the
+    pattern, never the whole session cost: every consumer (fix_rules
+    savings, insights "wasted", why_limit attr_cost, fix_generator
+    "Estimated waste") treats it as waste, and storing the full session
+    cost made claimed savings exceed real spend (2026-07-17 bug).
+    Always capped at session_cost.
+    """
+    if session_cost <= 0 or total_calls <= 0 or redundant_calls <= 0:
+        return 0.0
+    return min(session_cost * (redundant_calls / float(total_calls)), session_cost)
+
 
 def _input_hash(inp):
     """Short hash of tool input. Used to GROUP identical (tool, input) pairs
@@ -377,6 +398,29 @@ def detect_bad_compacts(conn, project=None, days=30):
 
 # ─── Main detection pass ─────────────────────────────────────────
 
+def _normalize_session_waste(conn):
+    """Cap each session's total attributed waste at its real spend.
+
+    Runs after every detect_all pass. No-op for sessions already within
+    bounds (a second pass over scaled rows changes nothing).
+    """
+    rows = conn.execute(
+        "SELECT w.session_id, SUM(w.token_cost) AS waste, "
+        "       (SELECT COALESCE(SUM(s.cost_usd), 0) FROM sessions s "
+        "         WHERE s.session_id = w.session_id) AS cost "
+        "FROM waste_events w GROUP BY w.session_id"
+    ).fetchall()
+    for r in rows:
+        waste = r["waste"] or 0
+        cost = r["cost"] or 0
+        if waste > cost and waste > 0:
+            conn.execute(
+                "UPDATE waste_events SET token_cost = token_cost * ? "
+                "WHERE session_id = ?",
+                (cost / waste, r["session_id"]),
+            )
+
+
 def _detect_cost_anomalies(conn):
     """Spend-anomaly detector — SURFACE ONLY (flags + evidence, never enforces).
 
@@ -405,7 +449,8 @@ def _detect_cost_anomalies(conn):
         "SELECT session_id, project, account, "
         "       COALESCE(SUM(cost_usd), 0) AS cost, "
         "       COALESCE(SUM(output_tokens), 0) AS out_tok, "
-        "       COUNT(*) AS turns, MIN(timestamp) AS t0 "
+        "       COUNT(*) AS turns, MIN(timestamp) AS t0, "
+        "       MAX(timestamp) AS t1 "
         "FROM sessions GROUP BY session_id"
     ).fetchall()
     S = [dict(r) for r in rows]
@@ -482,6 +527,7 @@ def _detect_cost_anomalies(conn):
             "severity": severity,
             "turns": s["turns"] or 0,
             "cost": s["cost"],
+            "t1": s.get("t1"),
             "detail": {"detector": "cost_anomaly", "rules": rules},
         })
     return flags, insufficient_baseline
@@ -515,6 +561,7 @@ def detect_all(conn=None):
         file_rows = conn.execute("SELECT file_path FROM scan_state ORDER BY file_path").fetchall()
     flounder_count = 0
     repeated_count = 0
+    window_cutoff = int(time.time()) - WASTE_WINDOW_DAYS * 86400
 
     for r in file_rows:
         filepath = r[0]
@@ -531,7 +578,8 @@ def detect_all(conn=None):
             "SELECT project, account, "
             "       COALESCE(SUM(cost_usd), 0) AS cost, "
             "       COUNT(*) AS turns, "
-            "       MAX(is_subagent) AS is_sub "
+            "       MAX(is_subagent) AS is_sub, "
+            "       MAX(timestamp) AS t1 "
             "FROM sessions WHERE session_id = ?",
             (sid,),
         ).fetchone()
@@ -539,6 +587,8 @@ def detect_all(conn=None):
             continue
         if info["is_sub"] == 1:
             continue  # subagent session — skip
+        if (info["t1"] or 0) < window_cutoff:
+            continue  # inactive >WASTE_WINDOW_DAYS — history, not current waste
         project, account = info["project"], info["account"]
         session_cost = info["cost"] or 0
         turn_count = info["turns"] or 0
@@ -547,23 +597,31 @@ def detect_all(conn=None):
         if not tool_calls:
             continue
 
-        # FLOUNDERING
+        # FLOUNDERING — waste = the redundant retries (all repeats past the
+        # first attempt of each run), as a fraction of the session's calls.
         n_flounder, flounder_detail = _detect_floundering(tool_calls)
         if n_flounder > 0:
             severity = "red" if n_flounder >= 2 else "amber"
+            redundant = max(flounder_detail["total_flounder_calls"] - n_flounder, 0)
+            waste = _attributed_waste(session_cost, redundant, len(tool_calls))
+            flounder_detail["attributed_waste_usd"] = round(waste, 4)
             insert_waste_event(
                 conn, sid, project, account, "floundering", severity,
-                turn_count, session_cost, flounder_detail,
+                turn_count, waste, flounder_detail,
             )
             flounder_count += 1
 
-        # REPEATED_READS
+        # REPEATED_READS — waste = the redundant re-reads (every read of a
+        # file past its first), as a fraction of the session's calls.
         n_rep, rep_detail = _detect_repeated_reads(tool_calls)
         if n_rep > 0:
             severity = "amber"
+            redundant = sum(f["reads"] - 1 for f in rep_detail["files"])
+            waste = _attributed_waste(session_cost, redundant, len(tool_calls))
+            rep_detail["attributed_waste_usd"] = round(waste, 4)
             insert_waste_event(
                 conn, sid, project, account, "repeated_reads", severity,
-                turn_count, session_cost, rep_detail,
+                turn_count, waste, rep_detail,
             )
             repeated_count += 1
 
@@ -599,30 +657,44 @@ def detect_all(conn=None):
         if avg <= 0:
             continue
         if (s["cost"] or 0) > avg * COST_OUTLIER_MULTIPLIER:
+            # Waste = the excess over a typical session for this project,
+            # NOT the whole session cost (an average-priced session would
+            # not have been flagged, so only the excess is savable).
+            excess = min(max((s["cost"] or 0) - avg, 0.0), s["cost"] or 0)
             insert_waste_event(
                 conn, s["session_id"], s["project"], s["account"],
-                "cost_outlier", "amber", s["turns"], s["cost"],
+                "cost_outlier", "amber", s["turns"], excess,
                 {"session_cost": round(s["cost"], 4),
                  "project_avg": round(avg, 4),
-                 "multiplier": round(s["cost"] / avg, 1)},
+                 "multiplier": round(s["cost"] / avg, 1),
+                 "attributed_waste_usd": round(excess, 4)},
             )
             outlier_count += 1
 
     # ── 4: DEEP_CONTEXT_NO_COMPACT — >100 turns with zero compaction ──
+    # Windowed like cost_outlier: without the timestamp gate this scanned
+    # ALL history and every rescan re-stamped months-old sessions into the
+    # "recent" waste window via detected_at (token-cost-inflation bug).
     deep_count = 0
     deep_sessions = conn.execute(
         "SELECT session_id, project, account, COUNT(*) AS turns, "
         "       SUM(cost_usd) AS cost, MAX(compaction_detected) AS any_compact "
         "FROM sessions "
+        "WHERE timestamp >= ? "
         "GROUP BY session_id "
         "HAVING turns > ? AND any_compact = 0",
-        (DEEP_TURN_THRESHOLD,),
+        (window_cutoff, DEEP_TURN_THRESHOLD),
     ).fetchall()
     for s in deep_sessions:
+        # Waste = cost of the turns past the compaction threshold — the deep
+        # tail that carried uncompacted context — not the whole session.
+        cost = s["cost"] or 0
+        excess_turns = max(s["turns"] - DEEP_TURN_THRESHOLD, 0)
+        waste = _attributed_waste(cost, excess_turns, s["turns"])
         insert_waste_event(
             conn, s["session_id"], s["project"], s["account"],
-            "deep_no_compact", "amber", s["turns"], s["cost"] or 0,
-            {"turns": s["turns"]},
+            "deep_no_compact", "amber", s["turns"], waste,
+            {"turns": s["turns"], "attributed_waste_usd": round(waste, 4)},
         )
         deep_count += 1
 
@@ -640,9 +712,19 @@ def detect_all(conn=None):
             account = (acct_row["account"] if acct_row and acct_row["account"] else "all")
             turns = acct_row["turns"] if acct_row else 0
             cost = float(acct_row["cost"] or 0) if acct_row else 0.0
+            # Waste = spend AFTER the bad compact (the re-established-context
+            # tail is where the dropped context bills again), capped at the
+            # session's cost — never the whole session.
+            post_row = conn.execute(
+                "SELECT COALESCE(SUM(cost_usd), 0) FROM sessions "
+                "WHERE session_id = ? AND timestamp > ?",
+                (bc["session_id"], bc["compact_timestamp"]),
+            ).fetchone()
+            waste = min(float(post_row[0] or 0), cost)
+            bc["attributed_waste_usd"] = round(waste, 4)
             insert_waste_event(
                 conn, bc["session_id"], bc["project"], account,
-                "bad_compact", bc["severity"], turns, cost, bc,
+                "bad_compact", bc["severity"], turns, waste, bc,
             )
             bad_compact_count += 1
     except Exception as e:
@@ -656,13 +738,38 @@ def detect_all(conn=None):
     try:
         ca_flags, cost_anomaly_insufficient = _detect_cost_anomalies(conn)
         for f in ca_flags:
+            if (f.get("t1") or 0) < window_cutoff:
+                continue  # inactive >WASTE_WINDOW_DAYS — history, not current waste
+            # Waste = the anomalous EXCESS, not the whole session: excess over
+            # the robust baseline (r1), excess over the allowed weekly rate
+            # (r2), or the full spend only when it produced no output (r3).
+            rules = f["detail"].get("rules", {})
+            waste = 0.0
+            if "r1_robust_outlier" in rules:
+                waste = max(waste, f["cost"] - rules["r1_robust_outlier"]["median_window"])
+            if "r2_weekly_acceleration" in rules:
+                ev = rules["r2_weekly_acceleration"]
+                waste = max(waste, ev["week_cost"] - COST_ANOMALY_R2_MULT * ev["prior_week_cost"])
+            if "r3_spend_without_output" in rules:
+                waste = f["cost"]  # spend with no output — the whole spend is waste
+            waste = min(max(waste, 0.0), f["cost"])
+            f["detail"]["attributed_waste_usd"] = round(waste, 4)
             insert_waste_event(
                 conn, f["session_id"], f["project"], f["account"],
-                "cost_anomaly", f["severity"], f["turns"], f["cost"], f["detail"],
+                "cost_anomaly", f["severity"], f["turns"], waste, f["detail"],
             )
             cost_anomaly_count += 1
     except Exception as e:
         print(f"[waste_patterns] cost_anomaly detection error: {e}", file=__import__("sys").stderr)
+
+    # ── Invariant: a session cannot waste more than it spent. Individual
+    #    attributions are each capped at session cost, but PATTERNS OVERLAP
+    #    (the same dollars can be both "outlier excess" and "spend without
+    #    output"), so the per-session SUM can still exceed the session's real
+    #    cost. Scale each offending session's rows down proportionally so
+    #    SUM(token_cost) == session cost. Orphan waste rows (session gone
+    #    from sessions table) zero out — their cost basis no longer exists.
+    _normalize_session_waste(conn)
 
     # Record scan timestamp for incremental next run
     set_setting(conn, "last_waste_scan", str(int(time.time())))

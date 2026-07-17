@@ -166,6 +166,16 @@ def _parse_line(line):
     if not model_raw and "message" in obj:
         model_raw = obj["message"].get("model", "")
 
+    # Claude Code writes one JSONL line per assistant content block, so a
+    # single billed API request can appear as several lines that all repeat
+    # the same usage (same requestId, timestamps 1-2s apart — which dodges
+    # the UNIQUE(session_id, timestamp, model) constraint). requestId
+    # (fallback: message.id) identifies the billed request; insert dedupes
+    # on (session_id, request_id) so each request bills exactly once.
+    request_id = obj.get("requestId") or ""
+    if not request_id and isinstance(obj.get("message"), dict):
+        request_id = obj["message"].get("id") or ""
+
     usage = {}
     if "message" in obj and isinstance(obj["message"], dict):
         usage = obj["message"].get("usage", {})
@@ -186,6 +196,7 @@ def _parse_line(line):
     return {
         "session_id": session_id,
         "timestamp": ts,
+        "request_id": request_id or None,
         "model": model,
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,

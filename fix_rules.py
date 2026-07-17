@@ -147,26 +147,33 @@ BROWSER_TEMPLATES = {
 
 # ─── Aggregates ──────────────────────────────────────────────────
 
-def _waste_aggregates(conn):
-    """Return {pattern_type: {"occurrences": n, "cost": $, "days": d}}."""
+def _waste_aggregates(conn, window_days=30):
+    """Return {pattern_type: {"occurrences": n, "cost": $, "days": d}}.
+
+    NOTE: `days` is fixed to the actual audit window (default 30d),
+    NOT the calendar spread between first/last occurrence. The old
+    spread-based calc let tightly-clustered events (e.g. floundering/
+    retry loops firing minutes apart in one session) collapse toward
+    days=1, causing _monthly_estimate to multiply that cluster's cost
+    by up to ~30x. Fixed 2026-07-17 -- see RECONCILE.md / backup
+    fix_rules.py.bak-* for the prior version.
+    """
     cur = conn.cursor()
     cur.execute("""
         SELECT pattern_type,
                COUNT(*),
-               COALESCE(SUM(token_cost), 0),
-               COALESCE(MIN(detected_at), 0),
-               COALESCE(MAX(detected_at), 0)
+               COALESCE(SUM(token_cost), 0)
         FROM waste_events
+        WHERE detected_at >= strftime('%s','now') - (? * 86400)
         GROUP BY pattern_type
         HAVING COUNT(*) > 0
-    """)
+    """, (window_days,))
     out = {}
-    for pt, n, cost, mn, mx in cur.fetchall():
-        days = max(1, (mx - mn) / 86400) if mx > mn else 1
+    for pt, n, cost in cur.fetchall():
         out[pt] = {
             "occurrences": int(n),
             "cost": float(cost or 0),
-            "days": days,
+            "days": window_days,
         }
     return out
 

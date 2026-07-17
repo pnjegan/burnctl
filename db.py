@@ -148,6 +148,13 @@ def init_db():
         # in the JSONL and pulls the top-level project-dir name from any
         # Read/Write path it finds. NULL when not inferrable.
         ("inferred_project", "TEXT"),
+        # v5.0 — billed API request id (requestId, fallback message.id).
+        # Claude Code writes one JSONL line per assistant content block, so
+        # one billed request can appear as several lines; the unique partial
+        # index below makes ingestion dedupe on (session_id, request_id).
+        # NULL on rows ingested before this column existed or when the JSONL
+        # carries neither field (no dedup possible — legacy behavior).
+        ("request_id", "TEXT"),
     ]:
         if not _column_exists(conn, "sessions", col):
             conn.execute(f"ALTER TABLE sessions ADD COLUMN {col} {typedef}")
@@ -157,6 +164,12 @@ def init_db():
     conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_account_ts ON sessions(account, timestamp)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_project_ts ON sessions(project, timestamp)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_account_project ON sessions(account, project)")
+    # One billed request = one row. Partial so legacy NULL/'' rows are exempt.
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_sid_request "
+        "ON sessions(session_id, request_id) "
+        "WHERE request_id IS NOT NULL AND request_id != ''"
+    )
 
     # --- Scan state for incremental scanning ---
     conn.executescript("""
@@ -1009,8 +1022,8 @@ def insert_session(conn, row):
                 input_tokens, output_tokens, cache_read_tokens,
                 cache_creation_tokens, cost_usd, source_path,
                 compaction_detected, tokens_before_compact, tokens_after_compact,
-                is_subagent, parent_session_id, inferred_project)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                is_subagent, parent_session_id, inferred_project, request_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 row["session_id"], row["timestamp"], row["project"],
                 row["account"], row["model"], row["input_tokens"],
@@ -1023,6 +1036,7 @@ def insert_session(conn, row):
                 row.get("is_subagent", 0),
                 row.get("parent_session_id"),
                 row.get("inferred_project"),
+                row.get("request_id"),
             ),
         )
         return conn.total_changes > 0
@@ -1032,7 +1046,13 @@ def insert_session(conn, row):
 
 def insert_waste_event(conn, session_id, project, account, pattern_type, severity,
                        turn_count, token_cost, detail=None):
-    """UPSERT a waste_events row. Idempotent on (session_id, pattern_type)."""
+    """UPSERT a waste_events row. Idempotent on (session_id, pattern_type).
+
+    token_cost is the pattern's ATTRIBUTED WASTED cost in USD — always <= the
+    session's total cost_usd, never the full session cost (storing the full
+    cost made summed "savings" exceed real spend — 2026-07-17 bug). Callers
+    compute the attribution; see waste_patterns.detect_all.
+    """
     import time as _t
     conn.execute(
         """INSERT INTO waste_events
