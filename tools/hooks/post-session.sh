@@ -3,7 +3,10 @@
 # Add to ~/.claude/settings.json PostToolUse hooks
 # Records session cost after each Claude Code session
 
-BURNCTL_DIR="${BURNCTL_DIR:-$HOME/.burnctl}"
+# Resolve burnctl dir from this script's own location (works regardless of cwd /
+# of where it's installed), unless BURNCTL_DIR is explicitly set.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BURNCTL_DIR="${BURNCTL_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 DASHBOARD_URL="${BURNCTL_URL:-http://localhost:8080}"
 
 # Trigger a scan to pick up the new session
