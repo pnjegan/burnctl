@@ -16,7 +16,7 @@ Schema reference (sessions, verified):
 import os
 import sqlite3
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -87,7 +87,7 @@ def get_burn_rate(db_path=DB_DEFAULT, window_minutes=5):
             "output_tokens": output_t,
             "sessions_active": sessions or 0,
             "window_minutes": window_minutes,
-            "sampled_at": datetime.now().isoformat(timespec="seconds"),
+            "sampled_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }
     except Exception as e:
         return {
