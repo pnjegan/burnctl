@@ -1318,3 +1318,10 @@ Checked and cleared, with the verification step used:
 - `gh issue list --state open` — returned no open issues.
 - Root `*.bak-*` clutter — already gitignored by pattern; local hygiene,
   not repo debt.
+
+TD-54  baseline_scanner.py timestamp field is naive local time (same failure class as TD-47/TD-50)   data-integrity   baseline_scanner.py:480   open   P3
+  - Discovered during TD-47 grep sweep 2026-07-18. `timestamp` field in
+    baseline snapshot output uses datetime.datetime.now() instead of a
+    UTC-aware call. Distinct subsystem from burn_rate.py (baseline
+    scanning, not burn-rate/anomaly emission) — separate ticket, not a
+    TD-47 duplicate.
