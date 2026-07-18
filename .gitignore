@@ -134,3 +134,7 @@ burnctl-complete-audit.txt
 
 # Pre-change file backups (created manually before risky multi-file edits)
 backups/
+
+# Session artifact bundles at repo root (burnctl.zip, files.zip etc.) —
+# never commit binary blobs; archive or delete them instead
+/*.zip
