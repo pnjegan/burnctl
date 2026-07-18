@@ -29,7 +29,7 @@ Last consolidated: 2026-04-24 (v4.5.3 gap-closure session).
 ### TD-02 — cli.py near size threshold
 - **Status:** open
 - **Priority:** P3 (v4.6 refactor candidate)
-- **Files:** `cli.py` (2,378 LOC)
+- **Files:** `cli.py` (2,443 LOC as of 2026-07-18 debt-audit; was 2,378)
 - **Fix:** split `cmd_*` handlers into a `commands/` package; keep entry
   point thin.
 - **Added:** auditor 2026-04-24.
@@ -1132,3 +1132,189 @@ the next verdict change.
 - **Fix:** drop the maintainer fallback; converge on the canonical pair as
   part of the TD-01 `db.open_local_db()` extraction.
 - **Added:** v5.0 S1 pre-session audit (2026-05-26).
+
+### TD-46 — Session-resume cold-cache replay burn (upstream #71659); staged gate awaiting approval
+- **Status:** in_progress (dry-run fix staged, human approval + VERIFY pending)
+- **Priority:** P2 (single cold resume of a multi-MB transcript burns ~45%
+  of a 5h window vs 8% baseline)
+- **Files:** `pxpipe-multiturn-harness.sh:56` (only local `--resume`
+  invoker); staged diff at
+  `/tmp/claude-0/-root-projects-burnctl/a7b9447d-dc6c-4ddc-90ef-1a2cfb044509/scratchpad/staged-fix-session-resume.diff`
+  (scratchpad is session-scoped — re-stage from the audit record if expired)
+- **Context:** 2026-07-18 usage audit correlated the FR3 `session-resume`
+  anomaly (45% vs 8% baseline) to open upstream issue
+  anthropics/claude-code#71659: `--resume` re-sends the entire prior
+  transcript once the ~5-min prompt cache is cold. Multi-MB transcripts
+  (narthex 6.7 MB ≈ 1.7M est. tokens) were resumed the same day. Full
+  record: `audit-reports/2026-07-18-usage-audit-session-resume.md`.
+- **Fix:** (1) human reviews/applies staged `resume_gate` diff; (2) run
+  VERIFY — re-run a session-resume task, compare against the mid-session
+  8% baseline; (3) file the prepared corroboration comment on #71659
+  (draft in the audit record). Behavioral: `/compact` before ending
+  sessions that will be resumed; avoid resuming multi-MB stale sessions.
+- **Acceptance:** gate applied (or consciously rejected), VERIFY run
+  against mid-session baseline, corroboration comment filed; audit
+  closable as `resolved` or `waiting-on-upstream`.
+- **Added:** usage-audit session 2026-07-18.
+
+### TD-47 — FR3 anomaly timestamps are timezone-naive
+- **Status:** open
+- **Priority:** P3 (data-integrity; skews boundary-type classification)
+- **Files:** FR3 anomaly-detector emit path (module TBD — wherever the
+  burn-rate deviation event is recorded)
+- **Context:** The 2026-07-18 audit received anomaly timestamp
+  `2026-07-18T14:00:00Z` while the system clock read 13:33Z — the "Z"
+  suffix was attached to a local (IST) wall-clock reading. Boundary-type
+  classification (mid-session vs reset/deadline-boundary) depends on
+  accurate UTC timestamps; a 5.5h skew could misclassify near-boundary
+  anomalies.
+- **Fix:** emit anomaly timestamps from a UTC clock
+  (`datetime.now(timezone.utc)`), never `datetime.now()` + "Z" suffix;
+  add a test asserting the emitted timestamp is within tolerance of UTC
+  now.
+- **Acceptance:** anomaly timestamps match UTC wall-clock at emit time.
+- **Update (2026-07-18 debt-audit):** swept live source three ways for a
+  Z-suffix-on-localtime emitter (grep `FR3`; py `isoformat`/`strftime`/`"Z"`
+  patterns; sh `date` formats) — none exists in tracked code. Only correct
+  UTC use found (`mcp_server.py:148` uses `time.gmtime`). The emit path is
+  therefore in gitignored audit tooling or a cron outside this repo —
+  needs operator knowledge to pin down. Adjacent naive-timestamp emit in
+  `burn_rate.py:90` (`sampled_at`) fixed as TD-50.
+- **Added:** usage-audit session 2026-07-18.
+
+### TD-48 — pxpipe harness cost cross-check silently void on subscription plans
+- **Status:** open
+- **Priority:** P3 (observability — the harness's own I1-style
+  cross-check discipline is defeated)
+- **Files:** `pxpipe-multiturn-harness.sh:66-75, 99-113`
+- **Context:** The 2026-07-17 run logged `cost_usd: 0` for all 10 turns
+  (both arms) — Claude Code reports zero `total_cost_usd` on
+  subscription plans — so the "baseline vs pxpipe total cost" comparison
+  the harness exists for summed 0 vs 0 and proved nothing, without
+  warning. Found while checking harness runs during the 2026-07-18
+  usage audit.
+- **Fix:** capture `usage.input_tokens` / `cache_read_input_tokens` /
+  `output_tokens` per turn into the JSONL and compare token totals per
+  arm; warn loudly (or abort) when every `cost_usd` is 0.
+- **Acceptance:** a subscription-mode run either compares token totals
+  or explicitly reports "cost comparison unavailable" instead of $0 vs $0.
+- **Added:** usage-audit session 2026-07-18.
+
+### TD-49 — /audit command Tier-2 definition drifts from PRD §4
+- **Status:** open
+- **Priority:** P4 (docs/process consistency)
+- **Files:** `.claude/commands/audit` command prompt (Tier table),
+  `.claude/commands/burnctl-usage-audit-prd.md` §4
+- **Context:** PRD §4 defines Tier 2 as "repro steps + maintainer
+  reply"; the /audit command's inline table relaxes it to "GitHub w/
+  repro". The 2026-07-18 audit hit this exactly (#71659 has repro but
+  no maintainer reply) and had to score under a stated deviation.
+- **Fix:** pick one definition and align both files; if keeping the
+  strict PRD version, add an explicit sub-tier (e.g. 0.6 for
+  repro-without-maintainer-reply) so scoring isn't ad hoc.
+- **Acceptance:** command table and PRD §4 agree; no deviation note
+  needed for the repro-without-reply case.
+- **Added:** usage-audit session 2026-07-18.
+
+### TD-50 — burn_rate sampled_at was timezone-naive local time
+- **Status:** resolved
+- **Priority:** P3 (same failure class as TD-47)
+- **Files:** `burn_rate.py:90` (import at line 19)
+- **Context:** `get_burn_rate()` stamped `sampled_at` with naive local
+  `datetime.now().isoformat()` — a local wall-clock reading in an ISO
+  field, inviting the exact local-read-as-UTC skew recorded in TD-47.
+  Grep confirmed zero external consumers parse `sampled_at`, so the
+  format change (`+00:00` offset) is safe.
+- **Fix:** `datetime.now(timezone.utc)`. Committed on branch
+  `debt-loop-2026-07-18` as `7a5b671` [auto-loop, reviewed]; 142/142
+  pytest + G5 banned-string gate pass after change.
+- **Added + resolved:** debt-audit loop 2026-07-18.
+
+### TD-51 — deprecated claude_ai_usage table awaiting v5.x drop migration
+- **Status:** open
+- **Priority:** P3 (fold into a v5.0 schema migration batch)
+- **Files:** `db.py:103-107`
+- **Context:** Schema DDL carries `-- DEPRECATED: claude_ai_usage is
+  superseded by claude_ai_snapshots` and an inline TODO to remove it in
+  v5.x with a migration step that drops the table. Not previously in
+  this ledger. v5.0 S1 decision (forward-only migrations) applies.
+- **Fix:** forward-only migration that drops `claude_ai_usage` after
+  verifying `claude_ai_snapshots` fully covers reads; remove the DDL
+  block and inline TODO. Medium effort — schema change, so run under
+  the state-gate discipline (dry-run → backup → assert), not an
+  unattended loop.
+- **Added:** debt-audit loop 2026-07-18.
+
+### TD-52 — verification layer live but untracked; INVARIANTS.md blocks on privacy rule
+- **Status:** held-for-review (structural blocklist: billing-adjacent content)
+- **Priority:** P2 (npm tarball/source skew is real: `package.json`
+  `files` includes `tools/hooks/`, so a publish would ship
+  `check_invariants.py` at whatever untracked state it happens to be in)
+- **Files:** `INVARIANTS.md`, `tools/hooks/check_invariants.py`,
+  `.claude/agents/verifier.md` (all untracked);
+  `install-verification-layer.sh:64` (the never-executed "add these to
+  git" step)
+- **Context:** The 2026-07-17 verification layer is installed and live
+  (Stop hook + verifier agent) but its files were never committed.
+  The loop did NOT auto-commit them: INVARIANTS.md quotes real
+  maintainer spend figures ($30,645 / $8,913 / $21,733), and
+  `daily_qa.py:87-89` documents the standing rule that maintainer
+  dollar amounts never enter source control. Held-for-review reason,
+  verbatim from the loop: "committing INVARIANTS.md as-is puts
+  maintainer billing figures into a repo with a public GitHub remote;
+  redact-vs-keep-untracked is the operator's call, not the loop's."
+- **Fix (operator decision):** either (a) redact the dollar figures in
+  INVARIANTS.md (rule ids + mechanics stay) and commit all three files,
+  or (b) keep INVARIANTS.md untracked and commit only
+  `tools/hooks/check_invariants.py` + verifier agent, or (c) exclude
+  `tools/hooks/check_invariants.py` from the npm `files` glob if it is
+  operator-only. Any option closes the tarball/source skew.
+- **Added:** debt-audit loop 2026-07-18.
+
+### TD-53 — root-level session artifacts from 2026-07-16/17 debugging burst
+- **Status:** open (gitignore guard committed; cleanup is operator's)
+- **Priority:** P4 (hygiene; no runtime impact)
+- **Files:** `tools_hooks_check_invariants.py` (byte-identical duplicate
+  of `tools/hooks/check_invariants.py` — verified with `diff`),
+  `claude_agents_verifier.md`, `claude_settings.json`,
+  `install-verification-layer.sh` (one-shot installer, already applied),
+  `self-audit.sh`, `fix-burnctl-phantom-savings.sh`,
+  `verify-agent-best-practices.sh`, `burnctl.zip`, `files.zip`
+- **Context:** Leftover installer sources and one-shot scripts from the
+  token-cost-inflation incident. All untracked, so deletion is
+  irreversible — the unattended loop does not delete them. The pxpipe
+  harness cluster (`harness.sh`, `burnctl-vs-pxpipe-harness.sh`,
+  `pxpipe-multiturn-harness.sh`, `analyze-results.py`) is NOT in this
+  list — it is live evidence for TD-46/TD-48.
+- **Fix:** operator moves the installer sources + one-shot scripts to
+  `ARCHIVE/` (or deletes) once satisfied the verification layer works.
+  Guard committed meanwhile: `.gitignore` `/*.zip` (`743b2d1`) so the
+  blobs can't be committed accidentally.
+- **Added:** debt-audit loop 2026-07-18.
+
+---
+
+## Debt-audit pass 2026-07-18 — ruled-out log (do not re-investigate)
+
+Checked and cleared, with the verification step used:
+- `cli.py:1432` `/root/backups/claudash` — documented rebrand-continuity
+  default, env-overridable (`BURNCTL_BACKUP_DIR`/`CLAUDASH_BACKUP_DIR`);
+  backup-path area additionally frozen pending SEC-001 Stage 5.
+- `daily_qa.py:91` `/root/projects/burnctl` — leak-DETECTION pattern,
+  intrinsic per its own comment; not a hardcoded-path bug.
+- "Claudash" hits in `config.py:134`, `server.py:50`, `why_limit.py:63`,
+  `daily_qa.py` — rebrand mapping tables, leak detectors, and historical
+  project-name data; none user-visible output.
+- Dependency staleness — zero-pip-dep by design (`requirements.txt`);
+  `tiktoken` optional with fallback. No `pip list --outdated` noise run.
+- Version drift — `_version.py` reads `package.json` at import; single
+  source of truth, no drift possible.
+- Test suite — real runner is pytest (142 tests, all green at baseline
+  and after each fix); `npm start` is just the CLI shim, not a test.
+- `ARCHIVE/` — deliberate, has README; tracked on purpose.
+- `tools/legacy/chat_title_sync.py` TODO block — legacy module, removed
+  from npm in v4.5.8, replacement direction already decided; deferred.
+- `mcp_server.py:148` Z-suffix timestamp — uses `time.gmtime`, correct.
+- `gh issue list --state open` — returned no open issues.
+- Root `*.bak-*` clutter — already gitignored by pattern; local hygiene,
+  not repo debt.
