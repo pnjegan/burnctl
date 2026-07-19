@@ -153,11 +153,20 @@ def detect_loops(db_path=DB_DEFAULT, lookback_minutes=10,
                  min_sessions=5, max_avg_gap_seconds=60):
     """Conservative retry-loop detector.
 
-    A "loop" here is the same project firing >= `min_sessions` sessions
-    within `lookback_minutes`, with an average inter-session gap below
-    `max_avg_gap_seconds`. The thresholds are deliberately conservative
-    so an active human-in-the-loop session does NOT trip the detector;
-    we want signal for autonomous retry storms only.
+    A "loop" here is >= `min_sessions` DISTINCT session_ids in the same
+    project starting within `lookback_minutes`, with an average gap
+    between distinct session START times below `max_avg_gap_seconds`.
+
+    IMPORTANT: this counts distinct sessions, not rows. The `sessions`
+    table has one row per turn, so a single long conversation with many
+    turns must NOT be counted as many "sessions" — that was a real bug
+    (found 2026-07-19): a 9-turn session and a 21-turn session both
+    triggered false HIGH-severity loop alerts under the old row-counting
+    version. Fixed by grouping on session_id and using each session's
+    MIN(timestamp) as its start time, so multi-turn activity within one
+    session is invisible to this detector by design — it is looking for
+    multiple DISTINCT sessions starting close together, which is the
+    actual signature of an autonomous retry storm.
 
     On missing/unreadable DB returns [] (silent — loop detection is
     best-effort and should never crash a statusline hook).
@@ -170,28 +179,32 @@ def detect_loops(db_path=DB_DEFAULT, lookback_minutes=10,
         cutoff = int(time.time()) - (lookback_minutes * 60)
         rows = db.execute(
             """
-            SELECT project, timestamp, cost_usd
+            SELECT project, session_id, MIN(timestamp) as start_ts,
+                   SUM(cost_usd) as session_cost
             FROM sessions
             WHERE timestamp > ?
-            ORDER BY project, timestamp
+            GROUP BY project, session_id
+            ORDER BY project, start_ts
             """,
             (cutoff,),
         ).fetchall()
 
         per_project = {}
-        for project, ts, cost in rows:
-            per_project.setdefault(project, []).append((ts, cost or 0.0))
+        for project, session_id, start_ts, cost in rows:
+            per_project.setdefault(project, []).append(
+                (session_id, start_ts, cost or 0.0)
+            )
 
         loops = []
         for project, sess in per_project.items():
             if len(sess) < min_sessions:
                 continue
-            avg_gap = (sess[-1][0] - sess[0][0]) / max(len(sess) - 1, 1)
+            avg_gap = (sess[-1][1] - sess[0][1]) / max(len(sess) - 1, 1)
             if avg_gap < max_avg_gap_seconds:
                 loops.append({
                     "project": project,
                     "session_count": len(sess),
-                    "total_cost_usd": round(sum(c for _, c in sess), 4),
+                    "total_cost_usd": round(sum(c for _, _, c in sess), 4),
                     "avg_gap_seconds": round(avg_gap, 1),
                     "severity": "HIGH" if len(sess) >= 10 else "MEDIUM",
                 })
