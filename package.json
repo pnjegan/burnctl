@@ -3,7 +3,7 @@
   "version": "4.5.9",
   "description": "Track and predict Claude Code usage before you hit limits. Finds waste patterns, generates CLAUDE.md fixes, measures impact. Local-only, zero pip deps.",
   "bin": {
-    "burnctl": "./bin/burnctl.js"
+    "burnctl": "bin/burnctl.js"
   },
   "scripts": {
     "start": "node bin/burnctl.js"
