@@ -148,3 +148,10 @@ COMPACT_INSTRUCTIONS = {
         "[key decisions made] [files in scope]"
     ),
 }
+
+MODEL_PRICING["gpt-5.6-sol"] = {
+    "input": 5.00,
+    "output": 30.00,
+    "cache_read": 0.50,
+    "cache_write": 6.25,
+}
