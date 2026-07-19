@@ -1325,3 +1325,39 @@ TD-54  baseline_scanner.py timestamp field is naive local time (same failure cla
     UTC-aware call. Distinct subsystem from burn_rate.py (baseline
     scanning, not burn-rate/anomaly emission) — separate ticket, not a
     TD-47 duplicate.
+
+TD-55  detect_loops() counted rows, not distinct sessions -- false HIGH alerts on any multi-turn session   bug/correctness   burn_rate.py   resolved   P2
+  - Found live 2026-07-19: a 9-turn Narthex session and a 21-turn "Other"
+    session both triggered false HIGH retry-loop alerts. Root cause: the
+    query selected (project, timestamp, cost_usd) without session_id, so
+    turns within one session were indistinguishable from separate
+    sessions. Fixed by grouping on session_id, using MIN(timestamp) as
+    session start. Verified: same data that produced the false alarm now
+    correctly shows zero loops. 142/142 tests still pass.
+
+TD-56  FR8 Codex adapter (codex_scanner.py) -- first real session ingested and honestly priced, not yet operationalized   feature   codex_scanner.py   open   P3
+  - Real Codex rollout JSONL (~/.codex/sessions/.../rollout-*.jsonl)
+    parsed and inserted into the same `sessions` table Claude Code uses,
+    via the existing insert_session() pipeline -- no parallel schema.
+    gpt-5.6-sol priced at $5/$30/M in+out (verified against multiple
+    independent sources 2026-07-19), added to MODEL_PRICING in config.py.
+    Adapter deliberately SKIPS (does not insert with cost_usd=0) any
+    session whose model has no real MODEL_PRICING entry -- avoids
+    repeating the TD-48 phantom-cost pattern.
+  - Still open: (a) not wired into any scheduled scan -- currently a
+    manual `python3 codex_scanner.py` run; (b) account="codex" is
+    unified into the same burn-rate/loop queries as Claude data by
+    default -- confirm this is the desired behavior, or add an account
+    filter if Claude and Codex usage should be viewed separately; (c)
+    codex_scanner.py currently lives at repo root, not under the
+    adapters/ structure the PRD's FR8 design specifies -- fine for a
+    single proof-of-concept file, worth restructuring before a second
+    adapter (e.g. Cursor, Gemini CLI) gets added.
+
+TD-57  gpt-5.6-sol long-context pricing tier not implemented in compute_codex_cost()   bug/cost-accuracy   codex_scanner.py   open   P3
+  - OpenAI charges 2x input / 1.5x output for the ENTIRE request when
+    input exceeds 272K tokens, not just the overage. compute_codex_cost()
+    always uses the standard rate -- will UNDERCOUNT cost on any large
+    Codex session. Not yet hit in practice (only session ingested so far
+    was ~12.8K input tokens), but will silently misprice the first large
+    session once one occurs.
