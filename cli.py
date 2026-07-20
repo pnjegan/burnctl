@@ -72,6 +72,10 @@ Commands:
   show-other    List all source paths of sessions currently tagged 'Other'
   stats         Print per-account stats table
   daily         One-shot daily brief (baseline overhead, DoD/WoW, top actions)
+  brief [--days N] [--account X] [--json]
+                Proactive cross-day per-project brief. Flags a project whose
+                burn today is a robust anomaly (median+MAD) vs prior days in
+                range, with a heuristic cause. Default: 7 days, all accounts.
   insights      Show active insights
   window        Show 5-hour window status
   export        Export last 30 days to CSV
@@ -2186,6 +2190,56 @@ def cmd_daily():
     print(f"  {bar}")
 
 
+def _brief_arg(flag, default=None):
+    """Read `--flag VALUE` from sys.argv, else default."""
+    if flag in sys.argv:
+        i = sys.argv.index(flag)
+        if i + 1 < len(sys.argv):
+            return sys.argv[i + 1]
+    return default
+
+
+def cmd_brief():
+    """`burnctl brief` — proactive cross-day per-project anomaly brief."""
+    from brief import brief, SnapshotUsageSource
+    from analyzer import compute_daily_snapshots
+
+    days = int(_brief_arg("--days", 7))
+    account = _brief_arg("--account", "all")
+    as_json = "--json" in sys.argv
+
+    conn = get_conn()
+    # Refresh today's snapshot rows from the sessions table before reading.
+    compute_daily_snapshots(conn, account)
+    records = SnapshotUsageSource(conn).daily_records(days, account)
+    # `today` MUST use the same convention compute_daily_snapshots buckets by:
+    # UTC (datetime.fromtimestamp(..., tz=timezone.utc)). No tz mismatch.
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    result = brief(records, today)
+
+    if as_json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return
+
+    projects = result["projects"]
+    print()
+    print(f"  burnctl brief — {result['generated_for']} (UTC)  ·  {days}d window  ·  account: {account}")
+    print(f"  {'─' * 72}")
+    if not projects:
+        print("  No project usage in range. Run `burnctl scan` first.")
+        print()
+        return
+    print(f"  {'PROJECT':<22} {'TODAY $':>9} {'BASELINE':>9} {'CACHE%':>7} {'SCORE':>6}  FLAG")
+    for p in projects:
+        flag = "⚠ ANOMALY" if p["anomaly"] else ""
+        print(f"  {p['project'][:22]:<22} {p['cost']:>9.2f} {p['baseline']:>9.2f} "
+              f"{p['cache_pct']:>6.1f}% {p['robust_score']:>6.1f}  {flag}")
+        if p.get("cause"):
+            c = p["cause"]
+            print(f"  {'':<22} └─ cause ({c['kind']}): {c['from']} → {c['to']} {c['unit']} (heuristic)")
+    print()
+
+
 def cmd_fix_rules():
     """`burnctl fix-rules` — emit a CLAUDE.md rules block from real waste data."""
     from fix_rules import generate_claude_md_rules
@@ -2395,6 +2449,7 @@ def main():
         "show-other": cmd_show_other,
         "stats": cmd_stats,
         "daily": cmd_daily,
+        "brief": cmd_brief,
         "insights": cmd_insights,
         "window": cmd_window,
         "export": cmd_export,

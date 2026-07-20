@@ -408,8 +408,15 @@ def model_rightsizing(conn, account="all"):
 
 # ── Trends ──
 
-def compute_daily_snapshots(conn, account="all"):
-    rows_30d = _fetch_rows(conn, account, _days_ago(30))
+def compute_daily_snapshots(conn, account="all", now=None):
+    # `now` (epoch seconds) is the ONLY clock in this function's path: it sets
+    # the 30-day fetch window here, and the date bucketing below is derived from
+    # each row's own timestamp (data, not the wall clock). Passing `now` makes
+    # the whole function deterministic for fixed-epoch fixtures; default reads
+    # the real clock exactly as before.
+    if now is None:
+        now = _now()
+    rows_30d = _fetch_rows(conn, account, now - (30 * 86400))
     if not rows_30d:
         return
 
