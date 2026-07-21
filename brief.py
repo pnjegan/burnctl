@@ -54,6 +54,21 @@ def _median(xs):
     return statistics.median(xs) if xs else 0.0
 
 
+def robust_score(cost, prior_costs):
+    """PURE, math-only. ``(cost - median(prior)) / MAD(prior)``, MAD floored at
+    1e-9 so a zero-spread prior never divides by zero.
+
+    The single source of the robust-score math — both the live ``brief()`` path
+    and ``calibrate()`` call this, so a threshold tuned by calibrate scores
+    project-days identically to how the brief will flag them.
+
+    Precondition: ``prior_costs`` is non-empty. Callers apply the
+    ``BRIEF_MIN_PRIOR_DAYS`` (>=3) guard before calling."""
+    med = statistics.median(prior_costs)
+    mad = statistics.median([abs(x - med) for x in prior_costs]) or 1e-9
+    return (cost - med) / mad
+
+
 def _tokens_per_session(r):
     return r["total_tokens"] / r["session_count"] if r["session_count"] else 0.0
 
@@ -145,13 +160,11 @@ def brief(records, today, k=BRIEF_MAD_K):
         baseline = _median(prior_costs)
 
         anomaly = False
-        robust_score = 0.0
+        score = 0.0
         cause = None
         if len(prior_rows) >= BRIEF_MIN_PRIOR_DAYS:
-            med = statistics.median(prior_costs)
-            mad = statistics.median([abs(x - med) for x in prior_costs]) or 1e-9
-            robust_score = (cost - med) / mad
-            if robust_score > k and cost >= BRIEF_MIN_COST_FLOOR:
+            score = robust_score(cost, prior_costs)
+            if score > k and cost >= BRIEF_MIN_COST_FLOOR:
                 anomaly = True
                 if tr is not None:
                     cause = _attribute(tr, prior_rows)
@@ -163,7 +176,7 @@ def brief(records, today, k=BRIEF_MAD_K):
             "cost": round(cost, 2),
             "cache_pct": round(cache_pct, 1),
             "baseline": round(baseline, 2),
-            "robust_score": round(robust_score, 1),
+            "robust_score": round(score, 1),
             "anomaly": anomaly,
         }
         if cause is not None:
@@ -172,3 +185,125 @@ def brief(records, today, k=BRIEF_MAD_K):
 
     projects.sort(key=lambda p: (p["account"], p["project"]))
     return {"generated_for": today, "projects": projects}
+
+
+# ── calibration (read-only threshold grounding) ─────────────────────────────
+CALIBRATE_K_CANDIDATES = (3, 4, 5, 6, 8)
+CALIBRATE_TARGET_RATE = 0.03   # center of the 2-5% target band; suggest k closest to it
+CALIBRATE_BAND = (0.02, 0.05)  # in_band iff suggested k's flag_rate lands in [2%, 5%]
+
+
+def _percentile(sorted_scores, p):
+    """Nearest-rank percentile on an ascending-sorted list. idx = ceil(p/100*N)-1.
+    Deterministic and hand-checkable. ``sorted_scores`` must be non-empty."""
+    import math
+    n = len(sorted_scores)
+    idx = max(0, min(n - 1, math.ceil(p / 100.0 * n) - 1))
+    return sorted_scores[idx]
+
+
+def calibrate(records, *, k_candidates=CALIBRATE_K_CANDIDATES,
+              floor=BRIEF_MIN_COST_FLOOR, min_prior=BRIEF_MIN_PRIOR_DAYS,
+              current_k=BRIEF_MAD_K):
+    """PURE. Retrospectively score EVERY qualifying project-day in ``records``
+    using the SAME ``robust_score`` + prior-window semantics as the live brief,
+    then report the score distribution + per-k flag-rate + a SUGGESTED k.
+
+    SUGGESTS ONLY — mutates nothing (no config, no DB). ``records`` are the
+    normalized per-project-day dicts ``brief()`` consumes.
+
+    A project-day qualifies when it has >= ``min_prior`` strictly-earlier days
+    (identical to brief's ``prior_rows = days < today``). Flag condition is the
+    live one: ``score > k AND cost >= floor``.
+
+    Returns a machine-readable dict; ``status='insufficient'`` (suggested_k=None)
+    when no project-day clears the guard — never a bogus k."""
+    by_project = {}
+    for r in records:
+        by_project.setdefault((r["account"], r["project"]), []).append(r)
+
+    scored = []            # (score, cost) for every qualifying project-day
+    insufficient_projects = []
+    for (account, project), rows in by_project.items():
+        rows = sorted(rows, key=lambda r: r["date"])
+        qualifying_here = 0
+        for i, row in enumerate(rows):
+            prior_costs = [rows[j]["total_cost_usd"] for j in range(i)]
+            if len(prior_costs) >= min_prior:
+                scored.append((robust_score(row["total_cost_usd"], prior_costs),
+                               row["total_cost_usd"]))
+                qualifying_here += 1
+        if qualifying_here == 0:
+            insufficient_projects.append({"account": account, "project": project,
+                                          "days": len(rows)})
+
+    total = len(scored)
+    if total == 0:
+        return {
+            "status": "insufficient",
+            "reason": f"no project-day has >= {min_prior} prior days in range",
+            "qualifying_project_days": 0,
+            "insufficient_projects": sorted(
+                insufficient_projects, key=lambda x: (x["account"], x["project"])),
+            "current_k": current_k,
+            "suggested_k": None,
+            "floor": floor,
+            "min_prior_days": min_prior,
+        }
+
+    scores = sorted(s for s, _ in scored)
+    distribution = {
+        "count": total,
+        "min": round(scores[0], 2),
+        "max": round(scores[-1], 2),
+        "p50": round(_percentile(scores, 50), 2),
+        "p90": round(_percentile(scores, 90), 2),
+        "p95": round(_percentile(scores, 95), 2),
+        "p99": round(_percentile(scores, 99), 2),
+    }
+
+    flag_table = []
+    for k in k_candidates:
+        flag_count = sum(1 for s, cost in scored if s > k and cost >= floor)
+        flag_table.append({
+            "k": k,
+            "flag_count": flag_count,
+            "flag_rate": round(flag_count / total, 4),
+        })
+
+    # Suggested k: the candidate whose flag_rate is CLOSEST TO the band center
+    # (3%) — centering keeps the threshold off the noisy 5% edge. Ties -> higher
+    # k (the more conservative / less noisy choice).
+    best = min(flag_table,
+               key=lambda e: (abs(e["flag_rate"] - CALIBRATE_TARGET_RATE), -e["k"]))
+    rate = best["flag_rate"]
+    lo, hi = CALIBRATE_BAND
+    in_band = lo <= rate <= hi
+    if rate < lo:
+        note = (f"flag-rate {rate:.1%} is below the {lo:.0%} floor even at the "
+                f"closest k={best['k']}: history too stable to need a higher threshold.")
+    elif not in_band and best["k"] == max(k_candidates) and rate > hi:
+        note = (f"flag-rate {rate:.1%} exceeds the {hi:.0%} target even at k="
+                f"{max(k_candidates)}: investigate the data or consider k>{max(k_candidates)}.")
+    elif in_band:
+        note = f"flag-rate {rate:.1%} lands in the {lo:.0%}-{hi:.0%} target band."
+    else:
+        note = f"flag-rate {rate:.1%} is nearest the {CALIBRATE_TARGET_RATE:.0%} center but outside the band."
+
+    return {
+        "status": "ok",
+        "qualifying_project_days": total,
+        "distribution": distribution,
+        "flag_table": flag_table,
+        "current_k": current_k,
+        "suggested_k": best["k"],
+        "suggested_flag_rate": rate,
+        "in_band": in_band,
+        "note": note,
+        "target_rate": CALIBRATE_TARGET_RATE,
+        "band": [lo, hi],
+        "floor": floor,
+        "min_prior_days": min_prior,
+        "insufficient_projects": sorted(
+            insufficient_projects, key=lambda x: (x["account"], x["project"])),
+    }

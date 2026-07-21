@@ -2201,6 +2201,9 @@ def _brief_arg(flag, default=None):
 
 def cmd_brief():
     """`burnctl brief` — proactive cross-day per-project anomaly brief."""
+    if "--calibrate" in sys.argv:
+        return _cmd_brief_calibrate()
+
     from brief import brief, SnapshotUsageSource
     from analyzer import compute_daily_snapshots
 
@@ -2237,6 +2240,62 @@ def cmd_brief():
         if p.get("cause"):
             c = p["cause"]
             print(f"  {'':<22} └─ cause ({c['kind']}): {c['from']} → {c['to']} {c['unit']} (heuristic)")
+    print()
+
+
+def _cmd_brief_calibrate():
+    """`burnctl brief --calibrate [--days N]` — READ-ONLY threshold grounding.
+
+    Retrospectively scores every historical project-day (reusing brief's
+    ``robust_score``), reports the score distribution + per-k flag-rate, and
+    SUGGESTS a k. Writes NOTHING: no ``compute_daily_snapshots`` refresh, no
+    config, no DB row. It suggests; the human decides."""
+    from brief import calibrate, SnapshotUsageSource
+
+    days = int(_brief_arg("--days", 365))     # full history by default (vs brief's 7)
+    account = _brief_arg("--account", "all")
+    as_json = "--json" in sys.argv
+
+    conn = get_conn()
+    if conn is None:
+        print("  No burnctl DB found. Run `burnctl scan` first.")
+        return
+    # NOTE: deliberately NO compute_daily_snapshots — calibrate is read-only.
+    records = SnapshotUsageSource(conn).daily_records(days, account)
+    result = calibrate(records)
+
+    if as_json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return
+
+    print()
+    print(f"  burnctl brief --calibrate  ·  {days}d window  ·  account: {account}")
+    print(f"  {'─' * 72}")
+    if result["status"] == "insufficient":
+        print(f"  Insufficient history to calibrate: {result['reason']}.")
+        print(f"  (need >= {result['min_prior_days']} prior days for any project-day; "
+              f"no suggestion emitted.)")
+        print()
+        return
+
+    d = result["distribution"]
+    print(f"  Scored {result['qualifying_project_days']} qualifying project-days "
+          f"(>= {result['min_prior_days']} prior days each).")
+    print(f"  Score distribution:  p50={d['p50']}  p90={d['p90']}  "
+          f"p95={d['p95']}  p99={d['p99']}  (min={d['min']} max={d['max']})")
+    print()
+    print(f"  {'k':>4}  {'FLAGS':>6}  {'FLAG-RATE':>9}")
+    for e in result["flag_table"]:
+        mark = "  <- suggested" if e["k"] == result["suggested_k"] else ""
+        print(f"  {e['k']:>4}  {e['flag_count']:>6}  {e['flag_rate']:>8.1%}{mark}")
+    print()
+    band = result["band"]
+    print(f"  Suggested k = {result['suggested_k']}  "
+          f"(flag-rate {result['suggested_flag_rate']:.1%}, target {result['target_rate']:.0%} "
+          f"center of {band[0]:.0%}-{band[1]:.0%} band, in_band={result['in_band']})")
+    print(f"  {result['note']}")
+    print(f"  Current BRIEF_MAD_K = {result['current_k']}  →  suggested {result['suggested_k']}. "
+          f"This SUGGESTS only; it does NOT write config.")
     print()
 
 
