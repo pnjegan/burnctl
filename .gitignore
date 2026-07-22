@@ -138,3 +138,8 @@ backups/
 # Session artifact bundles at repo root (burnctl.zip, files.zip etc.) —
 # never commit binary blobs; archive or delete them instead
 /*.zip
+
+# STATE-gate runtime marker (goal_gate.py mint) — session state, never committed.
+# The audit log lives OUTSIDE the tree at ~/.burnctl/goal-audit.log so a
+# `git reset --hard` rollback cannot erase it.
+.goal-runs/
