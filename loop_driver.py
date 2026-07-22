@@ -10,9 +10,13 @@ hardcoded no-push). This driver wraps that as the INNER loop and adds, ON TOP:
     default-infinite (the money-furnace guard);
   * a STALL detector on the high-water mark of green-axis count.
 
-Remedy execution in THIS goal is DRY-RUN ONLY: a FRICTION remedy is LOGGED
-("I would run: <remedy>") and never executed. No deploy, no network, no push.
-Real wet-run wiring is a later, separately-gated goal (GOAL-FRICTION-REMEDIES).
+Remedy execution DEFAULTS to DRY-RUN: a FRICTION remedy is LOGGED ("I would run:
+<remedy>") and never executed. GOAL-FRICTION-REMEDIES adds an OPT-IN wet mode
+(`wet=True`) that executes exactly ONE class of remedy — allow-listed FRICTION
+rules (initially {A3, A8} = `bash deploy.sh`) — via an INJECTED command_runner;
+everything else stays dry-run/escalate (default-deny). This module spawns NO
+process itself: the real executor lives in wet_exec.py and must be explicitly wired.
+A3->A9 escalates on the remedy's non-zero exit, zero retries. No push, ever.
 
 DETECT-NOT-ENFORCE holds: the driver stops ITS OWN loop and escalates a structured
 "why I stopped" record to the human accept gate. It never pushes, never self-ships.
@@ -61,16 +65,19 @@ class Rule:
 
 @dataclasses.dataclass(frozen=True)
 class Decision:
-    action: str                # "DRY_RUN_REMEDY" | "ITERATE" | "ESCALATE"
+    action: str                # "DRY_RUN_REMEDY" | "WET_EXECUTE" | "ITERATE" | "ESCALATE"
     rule_id: str
     reason: str
     remedy_logged: str = ""    # the dry-run log line, if action == DRY_RUN_REMEDY
     escalate_to: str = ""      # the GATE a friction remedy escalates to, if any
 
 
-def route(rule_id, rule_table):
-    """PURE router: (rule_id, table) -> Decision. No I/O, no clock, no randomness,
-    so identical inputs always yield the identical Decision (determinism)."""
+def route(rule_id, rule_table, *, wet=False, allow_list=frozenset()):
+    """PURE router: (rule_id, table, wet, allow_list) -> Decision. No I/O, no
+    clock, no randomness, so identical inputs always yield the identical Decision
+    (determinism). Defaults (wet=False, empty allow_list) reproduce the original
+    dry-run routing exactly — the only NEW behaviour is the WET_EXECUTE branch,
+    reachable ONLY for an allow-listed FRICTION rule in an explicit wet run."""
     rule = rule_table.get(rule_id)
     if rule is None:
         # Default-to-GATE: an unknown rule is treated as a human hard-stop, never
@@ -82,9 +89,17 @@ def route(rule_id, rule_table):
         return Decision("ESCALATE", rule_id, "FIXED POLICY routed -> category error, escalate")
 
     if rule.klass == "FRICTION":
+        if wet and rule_id in allow_list:
+            # ARMED: an explicitly allow-listed FRICTION rule in a wet run EXECUTES.
+            # Runtime escalation is decided by run() from the exit code (A3 deploy.sh
+            # exit 1 -> A9); escalate_to is carried for that failure branch.
+            return Decision("WET_EXECUTE", rule_id,
+                            "armed wet remedy -> execute (allow-listed)",
+                            remedy_logged=f"run: {rule.remedy}",
+                            escalate_to=rule.escalates_to)
         if rule.escalates_to:
-            # A FRICTION remedy that itself trips a GATE (A3 deploy.sh -> A9
-            # version-mismatch) ESCALATES to that GATE — it does NOT retry the remedy.
+            # NOT armed + known to trip a GATE (A3 deploy.sh -> A9 version-mismatch):
+            # ESCALATE to that GATE — do NOT retry, do NOT pretend-run.
             return Decision("ESCALATE", rule_id,
                             f"FRICTION remedy trips GATE {rule.escalates_to} -> escalate, no retry",
                             escalate_to=rule.escalates_to)
@@ -168,6 +183,22 @@ def make_telemetry_probe(run_start, conn_factory=None):
     return lambda: telemetry_budget_probe(run_start, conn_factory)
 
 
+# ─────────────────────────── A11 identical-DB-path proof (built, NOT armed) ───
+def verify_identical_db_path(prior_path, resolver=None):
+    """A11's identical-DB-path proof obligation. The A11 FRICTION remedy replaces
+    a hardcoded DB literal with `db.resolved_db_path()`; that is only safe if the
+    resolver returns the IDENTICAL path the literal resolved to. Returns True iff
+    resolver() == prior_path — a False reclassifies A11 -> GATE (no blind edit).
+
+    Built and tested this goal, but A11 stays OFF the wet allow-list: this helper
+    is NEVER invoked by an armed remedy here. `resolver` is injectable for tests;
+    it defaults to db.resolved_db_path (the single source get_conn() also uses)."""
+    if resolver is None:
+        import db  # lazy; keep the driver importable without touching the real DB
+        resolver = db.resolved_db_path
+    return resolver() == prior_path
+
+
 # ─────────────────────────── the driver ───────────────────────────
 
 class LoopDriver:
@@ -176,7 +207,9 @@ class LoopDriver:
     money-furnace failure, so construction without one raises."""
 
     def __init__(self, *, max_iterations, max_tokens, max_usd, stall_patience,
-                 budget_probe, rule_table, done_checks, budget_source="sessions-table"):
+                 budget_probe, rule_table, done_checks, budget_source="sessions-table",
+                 wet=False, wet_allow_list=frozenset(),
+                 command_runner=None, tree_status=None):
         # Money-furnace structural guard: no default-infinite budget, ever.
         for name, val in (("max_iterations", max_iterations),
                           ("max_tokens", max_tokens),
@@ -196,6 +229,23 @@ class LoopDriver:
         self.rule_table = dict(rule_table)
         self.done_checks = dict(done_checks)      # name -> callable(AttemptResult)->bool
         self.budget_source = budget_source
+
+        # ── WET-MODE (opt-in; dry-run is the DEFAULT) ──────────────────────────
+        # Default-deny executor: this module spawns no process itself. A wet run
+        # requires the caller to EXPLICITLY inject a command_runner (cmd)->(code, out)
+        # and a tree_status ()->porcelain-string. Tests inject mocks so the suite
+        # never restarts pm2 / runs deploy.sh; the real wrappers live in wet_exec.py.
+        self.wet = bool(wet)
+        self.wet_allow_list = frozenset(wet_allow_list)   # default-deny: empty = run nothing
+        if self.wet:
+            if command_runner is None:
+                raise ValueError("wet=True REQUIRES an explicit command_runner "
+                                 "(default-deny: no built-in executor)")
+            if tree_status is None:
+                raise ValueError("wet=True REQUIRES an explicit tree_status "
+                                 "(the dirty-tree preflight cannot be skipped)")
+        self.command_runner = command_runner      # (cmd:str) -> (exit_code:int, output:str)
+        self.tree_status = tree_status            # () -> `git status --porcelain` string
 
     # -- DONE = goal-green AND every injected check (auditor/reviewer/invariants) --
     # An AND-gate: it must block in the FAILING direction too (a single False -> not done).
@@ -223,6 +273,16 @@ class LoopDriver:
         feedback = None
         last = None
         dry_run_remedies = []
+        wet_executions = []            # real commands actually run (armed remedies only)
+
+        # ── WET PREFLIGHT (before any attempt or execution) ──
+        # loop_runner's rollback is `git reset --hard HEAD~1`, which DISCARDS
+        # uncommitted tracked changes. A wet run against a dirty tree risks data
+        # loss, so refuse to start one. Unbypassable: checked before the loop.
+        if self.wet and self.tree_status().strip():
+            return self._record("dirty-tree", 0, 0, -1, None, 0, 0,
+                                wet_executions=wet_executions)
+
         base_tok, base_usd = self.budget_probe()
         used_tok, used_usd = 0, 0
 
@@ -230,15 +290,18 @@ class LoopDriver:
             # ── OUTER CAPS (between attempts, before spending another) ──
             if outer >= self.max_iterations:
                 return self._record("cap-iterations", outer, inner_total, best_green,
-                                    last, used_tok, used_usd, dry_run_remedies=dry_run_remedies)
+                                    last, used_tok, used_usd, dry_run_remedies=dry_run_remedies,
+                                    wet_executions=wet_executions)
             tok, usd = self.budget_probe()
             used_tok, used_usd = tok - base_tok, usd - base_usd
             if used_tok >= self.max_tokens:
                 return self._record("cap-tokens", outer, inner_total, best_green,
-                                    last, used_tok, used_usd, dry_run_remedies=dry_run_remedies)
+                                    last, used_tok, used_usd, dry_run_remedies=dry_run_remedies,
+                                    wet_executions=wet_executions)
             if used_usd >= self.max_usd:
                 return self._record("cap-usd", outer, inner_total, best_green,
-                                    last, used_tok, used_usd, dry_run_remedies=dry_run_remedies)
+                                    last, used_tok, used_usd, dry_run_remedies=dry_run_remedies,
+                                    wet_executions=wet_executions)
 
             # ── ONE OUTER ATTEMPT (inner run_loop is authoritative within) ──
             attempt = attempt_fn(outer, feedback)
@@ -256,19 +319,45 @@ class LoopDriver:
             # ── DONE (four-way AND-gate; nothing softer) ──
             if attempt.overall_green and self._all_done_checks(attempt):
                 return self._record("done", outer, inner_total, best_green,
-                                    last, used_tok, used_usd, dry_run_remedies=dry_run_remedies)
+                                    last, used_tok, used_usd, dry_run_remedies=dry_run_remedies,
+                                    wet_executions=wet_executions)
 
             # ── ROUTE the blocking failure by its class ──
             if attempt.failure_rule_id is not None:
-                decision = route(attempt.failure_rule_id, self.rule_table)
+                decision = route(attempt.failure_rule_id, self.rule_table,
+                                 wet=self.wet, allow_list=self.wet_allow_list)
                 if decision.action == "ESCALATE":
                     stopped = "gate-remedy-escalation" if decision.escalate_to else "gate-human"
                     return self._record(stopped, outer, inner_total, best_green, last,
                                         used_tok, used_usd, decision=decision,
-                                        dry_run_remedies=dry_run_remedies)
-                if decision.action == "DRY_RUN_REMEDY":
+                                        dry_run_remedies=dry_run_remedies,
+                                        wet_executions=wet_executions)
+                if decision.action == "WET_EXECUTE":
+                    # The ONLY path that runs a real command — reached solely for an
+                    # allow-listed FRICTION rule in an explicit wet run.
+                    rule = self.rule_table.get(decision.rule_id)
+                    exit_code, output = self.command_runner(rule.remedy)
+                    wet_executions.append({"rule_id": decision.rule_id, "cmd": rule.remedy,
+                                           "exit_code": exit_code})
+                    if exit_code != 0:
+                        # Non-zero -> escalate per escalates_to (A3->A9), ZERO retries.
+                        stopped = ("gate-remedy-escalation" if decision.escalate_to
+                                   else "remedy-failed")
+                        return self._record(stopped, outer, inner_total, best_green, last,
+                                            used_tok, used_usd, decision=decision,
+                                            dry_run_remedies=dry_run_remedies,
+                                            wet_executions=wet_executions)
+                    feedback = f"wet remedy ok (exit 0): {rule.remedy}"   # re-run
+                elif decision.action == "DRY_RUN_REMEDY":
                     dry_run_remedies.append(decision.remedy_logged)   # LOG ONLY, never run
-                    feedback = decision.remedy_logged
+                    if self.wet:
+                        # Wet mode + this rule is NOT allow-listed (default-deny): log
+                        # the intent and STOP — never silently spin on an un-armed remedy.
+                        return self._record("remedy-not-armed", outer, inner_total, best_green,
+                                            last, used_tok, used_usd, decision=decision,
+                                            dry_run_remedies=dry_run_remedies,
+                                            wet_executions=wet_executions)
+                    feedback = decision.remedy_logged                 # dry-run default: re-run
                 else:  # ITERATE
                     feedback = f"iterate:{decision.rule_id}:{decision.reason}"
             else:
@@ -277,13 +366,17 @@ class LoopDriver:
             # ── STALL terminate (after routing, so a routed-but-stuck loop ends) ──
             if stall_counter >= self.stall_patience:
                 return self._record("stall", outer, inner_total, best_green,
-                                    last, used_tok, used_usd, dry_run_remedies=dry_run_remedies)
+                                    last, used_tok, used_usd, dry_run_remedies=dry_run_remedies,
+                                    wet_executions=wet_executions)
 
     # -- the structured "why I stopped" escalation record --
     def _record(self, stopped_by, outer, inner_total, best_green, last,
-                used_tokens, used_usd, decision=None, dry_run_remedies=()):
+                used_tokens, used_usd, decision=None, dry_run_remedies=(),
+                wet_executions=()):
         return {
-            "stopped_by": stopped_by,   # done|cap-iterations|cap-tokens|cap-usd|stall|gate-human|gate-remedy-escalation
+            # done | cap-iterations | cap-tokens | cap-usd | stall | gate-human |
+            # gate-remedy-escalation | remedy-not-armed | remedy-failed | dirty-tree
+            "stopped_by": stopped_by,
             "done": stopped_by == "done",
             "pushed": False,            # invariant: no branch of this driver pushes
             "rule_id": (decision.rule_id if decision else None),
@@ -305,6 +398,9 @@ class LoopDriver:
                 "attribution": "machine-wide-since-run_start (conservative, over-counts)",
             },
             "dry_run_remedies": list(dry_run_remedies),
+            "wet_executions": list(wet_executions),   # real commands actually run (armed only)
+            "wet": self.wet,
+            "wet_allow_list": sorted(self.wet_allow_list),
             "known_limitations": KNOWN_LIMITATIONS,
             "accept_out": "HUMAN-GATED — driver escalates; never self-ships, never pushes",
         }

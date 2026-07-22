@@ -42,6 +42,19 @@ def _open_or_create(path):
     return conn
 
 
+def resolved_db_path():
+    """The first EXISTING burnctl DB path across install layouts, or None.
+
+    SINGLE SOURCE of the resolution ORDER. get_conn() consumes this rather than
+    duplicating the candidate list, so any path-integrity proof (e.g. the A11
+    identical-DB-path obligation) validates the exact order the real code opens.
+    """
+    for path in (DB_PATH, os.path.expanduser("~/.burnctl/data/usage.db")):
+        if os.path.exists(path):
+            return path
+    return None
+
+
 def get_conn():
     """Open existing burnctl DB; return None if not found.
 
@@ -49,9 +62,9 @@ def get_conn():
     auto-create — that belongs in init_db(). Callers must handle None;
     see TD-13 for per-caller hardening status.
     """
-    for path in (DB_PATH, os.path.expanduser("~/.burnctl/data/usage.db")):
-        if os.path.exists(path):
-            return _open_or_create(path)
+    path = resolved_db_path()
+    if path is not None:
+        return _open_or_create(path)
     return None
 
 
