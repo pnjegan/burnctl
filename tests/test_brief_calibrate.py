@@ -42,7 +42,7 @@ def _row(account, project, d, cost, tokens=1000, cache=50.0, sessions=3):
 # one qualifying project-day. today costs chosen for clean hand-checked scores:
 #   score = (today - 12) / 2
 _D1, _D2, _D3, _D4 = "2026-07-01", "2026-07-02", "2026-07-03", "2026-07-04"
-_TODAY_COSTS = {"A": 20, "B": 30, "C": 13, "D": 24, "E": 16}   # -> 4.0 9.0 0.5 6.0 2.0
+_TODAY_COSTS = {"A": 20, "B": 30, "C": 13, "D": 24, "E": 16}   # log scores: 3.35 6.07 0.52 4.57 1.87
 
 
 def _hand_fixture():
@@ -95,31 +95,35 @@ class TestCalibrate(unittest.TestCase):
         self.assertEqual(res["qualifying_project_days"], 5)   # one per project
 
         d = res["distribution"]
-        # scores sorted: [0.5, 2.0, 4.0, 6.0, 9.0], nearest-rank percentiles:
+        # LOG-SCALED scoring (FIX-DETECTOR re-pin; was [0.5,2,4,6,9] pre-fix).
+        # priors [10,12,14] -> log1p [2.3979,2.5649,2.7081]; median=2.5649;
+        # MAD=median(|dev|)=0.1431. scores = (log1p(today)-2.5649)/0.1431:
+        #   A(20)=3.351  B(30)=6.073  C(13)=0.518  D(24)=4.570  E(16)=1.875
+        # sorted: [0.518, 1.875, 3.351, 4.570, 6.073]
         self.assertEqual(d["count"], 5)
-        self.assertEqual(d["min"], 0.5)
-        self.assertEqual(d["max"], 9.0)
-        self.assertEqual(d["p50"], 4.0)   # idx ceil(.5*5)-1 = 2
-        self.assertEqual(d["p90"], 9.0)   # idx ceil(.9*5)-1 = 4
-        self.assertEqual(d["p95"], 9.0)
-        self.assertEqual(d["p99"], 9.0)
+        self.assertEqual(d["min"], 0.52)
+        self.assertEqual(d["max"], 6.07)
+        self.assertEqual(d["p50"], 3.35)   # idx ceil(.5*5)-1 = 2
+        self.assertEqual(d["p90"], 6.07)   # idx ceil(.9*5)-1 = 4
+        self.assertEqual(d["p95"], 6.07)
+        self.assertEqual(d["p99"], 6.07)
 
         # per-k flag counts (score > k AND cost >= floor; all costs >= $1):
         by_k = {e["k"]: e for e in res["flag_table"]}
-        self.assertEqual(by_k[3]["flag_count"], 3)   # 4,6,9
-        self.assertEqual(by_k[4]["flag_count"], 2)   # 6,9
-        self.assertEqual(by_k[5]["flag_count"], 2)   # 6,9
-        self.assertEqual(by_k[6]["flag_count"], 1)   # 9
-        self.assertEqual(by_k[8]["flag_count"], 1)   # 9
+        self.assertEqual(by_k[3]["flag_count"], 3)   # >3: 3.35,4.57,6.07
+        self.assertEqual(by_k[4]["flag_count"], 2)   # >4: 4.57,6.07
+        self.assertEqual(by_k[5]["flag_count"], 1)   # >5: 6.07
+        self.assertEqual(by_k[6]["flag_count"], 1)   # >6: 6.07
+        self.assertEqual(by_k[8]["flag_count"], 0)   # >8: none
         self.assertAlmostEqual(by_k[3]["flag_rate"], 0.6)
         self.assertAlmostEqual(by_k[6]["flag_rate"], 0.2)
 
-        # suggested k = closest flag_rate to 3%; rates {.6,.4,.4,.2,.2} -> .2 nearest,
-        # tie between k=6 and k=8 -> higher k wins. Above the 5% band at k=8 -> "investigate".
+        # suggested k = closest flag_rate to 3%; rates {.6,.4,.2,.2,.0} -> .0 nearest
+        # (k=8), below the 2% floor -> "too stable" note.
         self.assertEqual(res["suggested_k"], 8)
-        self.assertAlmostEqual(res["suggested_flag_rate"], 0.2)
+        self.assertAlmostEqual(res["suggested_flag_rate"], 0.0)
         self.assertFalse(res["in_band"])
-        self.assertIn("investigate", res["note"].lower())
+        self.assertIn("stable", res["note"].lower())
 
     # -- suggestion rule: centered on 3%, lands in band when data supports it --
     def test_2b_suggested_k_centers_in_band(self):

@@ -14,6 +14,7 @@ Anomaly method mirrors ``waste_patterns._detect_cost_anomalies`` rule r1: robust
 enforces — it surfaces flags + evidence only.
 """
 
+import math
 import statistics
 
 from db import get_daily_snapshots
@@ -55,8 +56,17 @@ def _median(xs):
 
 
 def robust_score(cost, prior_costs):
-    """PURE, math-only. ``(cost - median(prior)) / MAD(prior)``, MAD floored at
+    """PURE, math-only. Robust z-score of LOG-SCALED cost:
+    ``(log1p(cost) - median(log1p(prior))) / MAD(log1p(prior))``, MAD floored at
     1e-9 so a zero-spread prior never divides by zero.
+
+    Why log (FIX-DETECTOR): daily cost is right-skewed and multiplicative — an
+    active-work day is many× an idle day — so a raw ``(cost - median)/MAD`` score
+    produced a fat tail no k could threshold (calibration over 310 project-days:
+    even k=8 flagged 11%+, p99≈117). ``log1p`` compresses that skew so a k lands
+    in the 2–5% target band. It also handles ``cost == 0`` (``log1p(0) == 0``), so
+    no separate zero/divide guard is needed beyond the MAD floor; ``max(0.0, x)``
+    guards against any stray negative cost.
 
     The single source of the robust-score math — both the live ``brief()`` path
     and ``calibrate()`` call this, so a threshold tuned by calibrate scores
@@ -64,9 +74,13 @@ def robust_score(cost, prior_costs):
 
     Precondition: ``prior_costs`` is non-empty. Callers apply the
     ``BRIEF_MIN_PRIOR_DAYS`` (>=3) guard before calling."""
-    med = statistics.median(prior_costs)
-    mad = statistics.median([abs(x - med) for x in prior_costs]) or 1e-9
-    return (cost - med) / mad
+    def _log(x):
+        return math.log1p(max(0.0, x))
+    lc = _log(cost)
+    lp = [_log(c) for c in prior_costs]
+    med = statistics.median(lp)
+    mad = statistics.median([abs(x - med) for x in lp]) or 1e-9
+    return (lc - med) / mad
 
 
 def _tokens_per_session(r):

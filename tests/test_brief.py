@@ -39,8 +39,9 @@ def _rec(date, project, cost, account="acct", tokens=400_000, cache=80.0, sessio
 
 
 # Prior-day costs shared by the spike fixtures. Hand math:
-#   sorted costs [6, 8, 10, 12, 14] -> median = 10
-#   abs deviations from 10: [4, 2, 0, 2, 4] -> sorted [0,2,2,4,4] -> MAD = 2
+#   baseline (output field) = RAW median of [6,8,10,12,14] = 10  (unchanged)
+#   robust_score now scores LOG1P cost (FIX-DETECTOR) — see the hand math in
+#   test_baseline_and_robust_score_hand_checked below.
 _PRIOR_DATES = ["2026-07-15", "2026-07-16", "2026-07-17", "2026-07-18", "2026-07-19"]
 _PRIOR_COSTS = [10.0, 8.0, 14.0, 6.0, 12.0]
 _TODAY = "2026-07-20"
@@ -72,10 +73,13 @@ class TestSpikeFlagsExactlyP(unittest.TestCase):
 
     def test_baseline_and_robust_score_hand_checked(self):
         p = self.by_name["P"]
-        # baseline = median(prior costs) = 10.0
+        # baseline = median(prior costs) = 10.0 (RAW median; baseline is unchanged)
         self.assertEqual(p["baseline"], 10.0)
-        # robust = (today - median) / MAD = (30 - 10) / 2 = 10.0
-        self.assertEqual(p["robust_score"], 10.0)
+        # robust = z-score of LOG1P cost (FIX-DETECTOR re-pin; was 10.0 pre-fix):
+        #   log1p priors [10,8,14,6,12] = [2.3979,2.1972,2.7081,1.9459,2.5649]
+        #   median = 2.3979 ; MAD = median|dev| = 0.2007 ; log1p(30) = 3.4340
+        #   (3.4340 - 2.3979) / 0.2007 = 5.163 -> round(1) = 5.2
+        self.assertEqual(p["robust_score"], 5.2)
 
     def test_anomaly_carries_heuristic_cause(self):
         p = self.by_name["P"]
