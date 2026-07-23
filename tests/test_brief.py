@@ -88,6 +88,18 @@ class TestSpikeFlagsExactlyP(unittest.TestCase):
         self.assertIn(p["cause"]["kind"],
                       {"cache_hit_drop", "session_count_spike", "tokens_per_session_jump"})
 
+    def test_movement_hand_checked(self):
+        # BRIEF-REFRAME: movement = today_cost / baseline(prior median), rounded 2.
+        #   P: 30.0 / 10.0 = 3.0     Q: 11.0 / 10.0 = 1.1
+        self.assertEqual(self.by_name["P"]["movement"], 3.0)
+        self.assertEqual(self.by_name["Q"]["movement"], 1.1)
+
+    def test_sorted_by_today_cost_desc(self):
+        # BRIEF-REFRAME: biggest burner first (was sorted account,project).
+        #   P today $30 sorts before Q today $11.
+        order = [p["project"] for p in self.result["projects"]]
+        self.assertEqual(order, ["P", "Q"])
+
 
 class TestInsufficientBaseline(unittest.TestCase):
     """Assertion 2 — fewer than 3 prior days must not raise a flag."""
@@ -118,11 +130,63 @@ class TestJsonSchema(unittest.TestCase):
         self.assertEqual(parsed["generated_for"], _TODAY)
         self.assertGreaterEqual(len(parsed["projects"]), 1)
         p = parsed["projects"][0]
-        for key in ("tokens", "cost", "cache_pct", "baseline", "robust_score", "anomaly"):
+        for key in ("tokens", "cost", "cache_pct", "baseline", "movement",
+                    "robust_score", "anomaly"):
             self.assertIn(key, p)
         self.assertIsInstance(p["anomaly"], bool)
         if p["anomaly"]:
             self.assertIn("cause", p)  # cause present only when anomalous
+
+
+class TestMovementNoBaseline(unittest.TestCase):
+    """BRIEF-REFRAME assertion 2 — no baseline -> movement None, no divide error."""
+
+    def test_zero_prior_days_movement_none(self):
+        # Only today, zero prior days -> baseline 0 -> movement None (not a ratio).
+        result = brief([_rec(_TODAY, "P", 50.0)], _TODAY)
+        p = result["projects"][0]
+        self.assertIsNone(p["movement"])
+        self.assertEqual(p["baseline"], 0.0)
+
+    def test_all_zero_prior_costs_movement_none(self):
+        # Prior days exist but all cost $0 -> baseline 0 -> movement None, no
+        # ZeroDivisionError even though today has cost.
+        recs = [_rec(d, "P", 0.0) for d in _PRIOR_DATES]
+        recs.append(_rec(_TODAY, "P", 25.0))
+        p = brief(recs, _TODAY)["projects"][0]
+        self.assertIsNone(p["movement"])
+
+    def test_subcent_baseline_reads_no_baseline_not_absurd_ratio(self):
+        # BRIEF-REFRAME hardening (bug-hunt): a sub-cent typical day rounds to
+        # baseline 0.00; movement must then read "no baseline" (None), never an
+        # absurd ×50000 ratio next to a displayed baseline of 0.0. The displayed
+        # baseline and movement can never contradict.
+        recs = [_rec(d, "P", 0.001) for d in _PRIOR_DATES]
+        recs.append(_rec(_TODAY, "P", 50.0))
+        p = brief(recs, _TODAY)["projects"][0]
+        self.assertEqual(p["baseline"], 0.0)
+        self.assertIsNone(p["movement"])
+
+    def test_negative_today_cost_does_not_produce_negative_movement(self):
+        # BRIEF-REFRAME hardening: a stray negative today cost (a credit/refund or
+        # a bad record) is clamped like robust_score's max(0.0,x) — movement 0.0,
+        # never "×-0.5".
+        recs = [_rec(d, "P", 10.0) for d in _PRIOR_DATES]
+        recs.append(_rec(_TODAY, "P", -5.0))
+        p = brief(recs, _TODAY)["projects"][0]
+        self.assertEqual(p["movement"], 0.0)
+
+    def test_unflagged_project_still_has_full_descriptive_row(self):
+        # BRIEF-REFRAME assertion 3 — a steady, UNflagged project still renders a
+        # complete descriptive row (tokens, cost, cache, movement) so the brief is
+        # useful on a zero-flag day.
+        recs = [_rec(d, "P", c) for d, c in zip(_PRIOR_DATES, _PRIOR_COSTS)]
+        recs.append(_rec(_TODAY, "P", 11.0))  # steady, ~median -> no flag
+        p = brief(recs, _TODAY)["projects"][0]
+        self.assertFalse(p["anomaly"])
+        self.assertEqual(p["movement"], 1.1)      # 11.0 / 10.0
+        self.assertGreater(p["tokens"], 0)
+        self.assertEqual(p["cost"], 11.0)
 
 
 class TestIntegrationRealPipeline(unittest.TestCase):

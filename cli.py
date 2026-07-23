@@ -2232,15 +2232,22 @@ def cmd_brief():
         print("  No project usage in range. Run `burnctl scan` first.")
         print()
         return
-    print(f"  {'PROJECT':<22} {'TODAY $':>9} {'BASELINE':>9} {'CACHE%':>7} {'SCORE':>6}  FLAG")
+    # Descriptive-first: where did today's tokens go, biggest burner first. The
+    # anomaly flag is a compact marker on the row, not the reason the row exists.
+    print(f"  {'PROJECT':<22} {'TODAY $':>9} {'TOKENS':>10} {'CACHE%':>7} {'vs TYPICAL':>11}")
     for p in projects:
-        flag = "⚠ ANOMALY" if p["anomaly"] else ""
-        print(f"  {p['project'][:22]:<22} {p['cost']:>9.2f} {p['baseline']:>9.2f} "
-              f"{p['cache_pct']:>6.1f}% {p['robust_score']:>6.1f}  {flag}")
+        mv = p.get("movement")
+        movement = f"×{mv:.1f}" if mv is not None else "no baseline"
+        mark = "  ⚠" if p["anomaly"] else ""
+        print(f"  {p['project'][:22]:<22} {p['cost']:>9.2f} {p['tokens']:>10,} "
+              f"{p['cache_pct']:>6.1f}% {movement:>11}{mark}")
         if p.get("cause"):
             c = p["cause"]
-            print(f"  {'':<22} └─ cause ({c['kind']}): {c['from']} → {c['to']} {c['unit']} (heuristic)")
+            print(f"  {'':<22} └─ unusual today ({c['kind']}): {c['from']} → {c['to']} {c['unit']} (heuristic)")
     print()
+    if any(p["anomaly"] for p in projects):
+        print("  ⚠ = today's burn is unusual vs this project's own typical day")
+        print()
 
 
 def _cmd_brief_calibrate():

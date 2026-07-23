@@ -148,8 +148,10 @@ def brief(records, today, k=BRIEF_MAD_K):
 
     Returns ``{"generated_for": today, "projects": [ProjectBrief, ...]}`` where
     each ProjectBrief is ``{project, account, tokens, cost, cache_pct, baseline,
-    robust_score, anomaly, cause?}``. Deterministic: identical input yields
-    byte-identical output (projects sorted; floats rounded)."""
+    movement, robust_score, anomaly, cause?}``. ``movement`` is today's cost as a
+    ratio of the prior-day median (``None`` when there is no baseline). Projects
+    are sorted by today's cost descending (biggest burner first). Deterministic:
+    identical input yields byte-identical output (floats rounded)."""
     by_project = {}
     for r in records:
         by_project.setdefault((r["account"], r["project"]), []).append(r)
@@ -173,6 +175,20 @@ def brief(records, today, k=BRIEF_MAD_K):
         prior_costs = [r["total_cost_usd"] for r in prior_rows]
         baseline = _median(prior_costs)
 
+        # Movement: today's cost vs the project's typical prior day (raw prior
+        # median — STATE-1 diagnostic found only 2.6% idle days, so an active-day
+        # filter changes movement for ~1/10 projects and is not worth the
+        # complexity). Descriptive, not a verdict. Computed from the SAME rounded
+        # baseline the reader sees (``baseline_disp``) so "×N vs typical" is always
+        # hand-checkable against the displayed baseline, and a sub-cent baseline
+        # (rounds to 0.00) reads "no baseline" instead of an absurd unexplained
+        # ratio. ``None`` when there is no positive baseline → no divide-by-zero,
+        # no fabricated ratio. ``max(0.0, cost)`` mirrors robust_score's guard
+        # against a stray negative cost (a "×-0.5" would be meaningless here).
+        baseline_disp = round(baseline, 2)
+        movement = (round(max(0.0, cost) / baseline_disp, 2)
+                    if baseline_disp > 0 else None)
+
         anomaly = False
         score = 0.0
         cause = None
@@ -189,7 +205,8 @@ def brief(records, today, k=BRIEF_MAD_K):
             "tokens": tokens,
             "cost": round(cost, 2),
             "cache_pct": round(cache_pct, 1),
-            "baseline": round(baseline, 2),
+            "baseline": baseline_disp,
+            "movement": movement,
             "robust_score": round(score, 1),
             "anomaly": anomaly,
         }
@@ -197,7 +214,10 @@ def brief(records, today, k=BRIEF_MAD_K):
             pb["cause"] = cause
         projects.append(pb)
 
-    projects.sort(key=lambda p: (p["account"], p["project"]))
+    # Descriptive-first: biggest burners today lead, so "where did my tokens go?"
+    # is answered by the first row. Tie-break on (account, project) for a stable,
+    # deterministic order.
+    projects.sort(key=lambda p: (-p["cost"], p["account"], p["project"]))
     return {"generated_for": today, "projects": projects}
 
 
