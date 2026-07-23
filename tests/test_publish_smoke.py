@@ -30,6 +30,7 @@ import hashlib
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -158,31 +159,67 @@ class TestFreshInstallSmoke(unittest.TestCase):
         self.assertEqual(leaked, [],
                          f"brief created files under HOME on a fresh run: {leaked}")
 
-    # -- STATE-3 #1: HEADLINE — current behaviour is a BLOCKER (hard record) -----
-    def test_fresh_brief_current_behaviour_is_blocker_1(self):
-        """CAPTURES the current BLOCKER honestly: fresh `brief` tracebacks. Kept
-        green so the suite is green while the red is on the record. Fails (on
-        purpose) the day BLOCKER-1 is fixed — update this + the expectedFailure."""
-        r = _run(self.tmp, self.env, ["brief"])
-        self.assertNotEqual(r.returncode, 0,
-                            "brief no longer crashes — BLOCKER-1 may be fixed; "
-                            "update test_fresh_brief_is_graceful + this test")
-        self.assertIn("Traceback", r.stderr)
-        self.assertIn("NoneType", r.stderr)  # get_conn() -> None reaches .execute
-
-    # -- STATE-3 #1: HEADLINE — desired behaviour, not yet met (honest red) ------
-    @unittest.expectedFailure
+    # -- STATE-3 #1: HEADLINE — fresh `brief` is graceful (BLOCKER-1 FIXED) -------
     def test_fresh_brief_is_graceful(self):
-        """DESIRED first-run behaviour (BLOCKER-1, docs/PUBLISH-READINESS.md):
-        exit 0 with a graceful no-data hint, no traceback. Currently fails ->
-        expectedFailure. Flips to an unexpected success when BLOCKER-1 is fixed."""
+        """FIX-FRESH-BRIEF: on a no-DB fresh install `burnctl brief` exits 0 with a
+        friendly no-data hint and NO traceback (was BLOCKER-1: it tracebacked with
+        NoneType.execute). This was an ``expectedFailure`` before the fix landed."""
         r = _run(self.tmp, self.env, ["brief"])
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn("Traceback", r.stderr)
         combined = (r.stdout + r.stderr).lower()
-        self.assertTrue(any(s in combined for s in ("no data", "no burnctl db",
-                        "run `burnctl scan`", "scan first")),
-                        f"no graceful no-data hint in output: {r.stdout!r} {r.stderr!r}")
+        self.assertIn("no burnctl data yet", combined)
+        self.assertIn("burnctl scan", combined)  # tells the user what to do next
+
+    # -- STATE-3 #2: the unusable-DB case is DISTINGUISHED from the empty case ----
+    def test_unusable_db_is_named_error_not_no_data(self):
+        """A DB that EXISTS but can't be opened (corrupt bytes) must NOT be reported
+        as "no data yet" — it names the path and exits non-zero. Proves the guard
+        distinguishes genuinely-absent from present-but-broken."""
+        # Plant a corrupt DB at the package-local path the fresh env resolves to.
+        db_dir = os.path.join(self.tmp, "data")
+        os.makedirs(db_dir, exist_ok=True)
+        corrupt = os.path.join(db_dir, "usage.db")
+        with open(corrupt, "wb") as fh:
+            fh.write(b"this is not a sqlite database, it is garbage bytes")
+        try:
+            r = _run(self.tmp, self.env, ["brief"])
+            self.assertNotEqual(r.returncode, 0,
+                                "unusable DB must fail, not report 'no data'")
+            out = (r.stdout + r.stderr).lower()
+            self.assertNotIn("no burnctl data yet", out)   # NOT the empty message
+            self.assertIn("cannot open database", out)     # clear error
+            self.assertIn(corrupt.lower(), out)            # names the path
+        finally:
+            os.remove(corrupt)
+
+    # -- STATE-3 #3: with a populated DB, brief renders normally (no regression) --
+    def test_populated_db_brief_renders_normally(self):
+        """When a DB with data exists, the guard is transparent: brief renders its
+        normal table (exit 0), never the no-data message."""
+        # Build a real, fully-schema'd DB with the app's own init_db() in the
+        # sandbox (creates <tmp>/data/usage.db), then insert a session row.
+        init = subprocess.run(
+            [sys.executable, "-c", "import db; db.init_db()"],
+            cwd=self.tmp, env=self.env, capture_output=True, text=True, timeout=30)
+        self.assertEqual(init.returncode, 0, init.stderr)
+        dbp = os.path.join(self.tmp, "data", "usage.db")
+        self.assertTrue(os.path.exists(dbp))
+        conn = sqlite3.connect(dbp)
+        conn.execute(
+            "INSERT INTO sessions (session_id, timestamp, project, account, model, "
+            "input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, "
+            "cost_usd) VALUES ('s1', 1700000000, 'alpha', 'acct', 'claude-sonnet', "
+            "1000, 2000, 500, 300, 3.0)")
+        conn.commit()
+        conn.close()
+        try:
+            r = _run(self.tmp, self.env, ["brief"])
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertNotIn("no burnctl data yet", (r.stdout + r.stderr).lower())
+            self.assertIn("burnctl brief", r.stdout)   # the normal header rendered
+        finally:
+            shutil.rmtree(os.path.join(self.tmp, "data"), ignore_errors=True)
 
 
 if __name__ == "__main__":

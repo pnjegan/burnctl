@@ -2211,7 +2211,24 @@ def cmd_brief():
     account = _brief_arg("--account", "all")
     as_json = "--json" in sys.argv
 
-    conn = get_conn()
+    # Distinguish "no DB yet" (a fresh install — friendly, exit 0) from "a DB
+    # exists but can't be opened" (corrupt/unreadable/perms — name the path, fail
+    # loudly). get_conn() returns None ONLY when no DB file exists on any known
+    # path; an unusable existing DB makes _open_or_create() RAISE, so the two are
+    # mechanism-distinct and never conflated. Reuses the same `conn is None` no-DB
+    # idiom as `--calibrate`/statusline.
+    import sqlite3
+    from db import resolved_db_path
+    try:
+        conn = get_conn()
+    except (sqlite3.Error, OSError) as e:
+        print(f"  burnctl: cannot open database at {resolved_db_path()}: {e}",
+              file=sys.stderr)
+        sys.exit(1)
+    if conn is None:
+        print("  No burnctl data yet. Run `burnctl scan` to ingest your Claude Code")
+        print("  usage, then `burnctl brief` shows where your tokens went today.")
+        return
     # Refresh today's snapshot rows from the sessions table before reading.
     compute_daily_snapshots(conn, account)
     records = SnapshotUsageSource(conn).daily_records(days, account)
