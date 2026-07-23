@@ -700,6 +700,15 @@ def cmd_fixes():
 
 def cmd_fix_add():
     """Interactive baseline + fix recorder."""
+    # This command prompts for input; without a terminal (piped stdin / CI /
+    # a fresh-install probe) input() would EOFError and traceback. Fail cleanly
+    # with guidance instead — same "clear message, never a stack trace" rule as
+    # the DB guards.
+    if not sys.stdin.isatty():
+        print("  burnctl fix add needs an interactive terminal (it prompts for "
+              "input).\n  Run it directly in a terminal, not piped or in CI.",
+              file=sys.stderr)
+        sys.exit(1)
     init_db()
     conn = get_conn()
     from fix_tracker import record_fix, WASTE_PATTERNS, FIX_TYPES, WASTE_PATTERN_LABELS
@@ -2199,6 +2208,34 @@ def _brief_arg(flag, default=None):
     return default
 
 
+def _connect_or_exit():
+    """Shared fresh-install DB guard — the single FIX-FRESH-BRIEF idiom (do NOT
+    fork a second no-DB detector). Returns an open connection, or does not return:
+
+      - no DB on any known path  -> friendly "no data yet, run scan", exit 0
+      - a DB exists but can't be opened (corrupt/unreadable/perms) -> a clear
+        error naming the path, exit 1 (NEVER the "no data" message)
+
+    get_conn() returns None ONLY when no DB file exists on any known path; an
+    unusable existing DB makes _open_or_create() RAISE, so the two cases are
+    mechanism-distinct and can never be conflated ("no data yet" never masks a
+    real failure). Every command that reads an existing DB uses this one guard.
+    """
+    import sqlite3
+    from db import resolved_db_path
+    try:
+        conn = get_conn()
+    except (sqlite3.Error, OSError) as e:
+        print(f"  burnctl: cannot open database at {resolved_db_path()}: {e}",
+              file=sys.stderr)
+        sys.exit(1)
+    if conn is None:
+        print("  No burnctl data yet. Run `burnctl scan` to ingest your Claude Code")
+        print("  usage first.")
+        sys.exit(0)
+    return conn
+
+
 def cmd_brief():
     """`burnctl brief` — proactive cross-day per-project anomaly brief."""
     if "--calibrate" in sys.argv:
@@ -2211,24 +2248,9 @@ def cmd_brief():
     account = _brief_arg("--account", "all")
     as_json = "--json" in sys.argv
 
-    # Distinguish "no DB yet" (a fresh install — friendly, exit 0) from "a DB
-    # exists but can't be opened" (corrupt/unreadable/perms — name the path, fail
-    # loudly). get_conn() returns None ONLY when no DB file exists on any known
-    # path; an unusable existing DB makes _open_or_create() RAISE, so the two are
-    # mechanism-distinct and never conflated. Reuses the same `conn is None` no-DB
-    # idiom as `--calibrate`/statusline.
-    import sqlite3
-    from db import resolved_db_path
-    try:
-        conn = get_conn()
-    except (sqlite3.Error, OSError) as e:
-        print(f"  burnctl: cannot open database at {resolved_db_path()}: {e}",
-              file=sys.stderr)
-        sys.exit(1)
-    if conn is None:
-        print("  No burnctl data yet. Run `burnctl scan` to ingest your Claude Code")
-        print("  usage, then `burnctl brief` shows where your tokens went today.")
-        return
+    # Fresh-install guard — the single shared idiom (no DB -> friendly exit 0;
+    # unusable DB -> error naming the path, exit 1).
+    conn = _connect_or_exit()
     # Refresh today's snapshot rows from the sessions table before reading.
     compute_daily_snapshots(conn, account)
     records = SnapshotUsageSource(conn).daily_records(days, account)
@@ -2280,10 +2302,7 @@ def _cmd_brief_calibrate():
     account = _brief_arg("--account", "all")
     as_json = "--json" in sys.argv
 
-    conn = get_conn()
-    if conn is None:
-        print("  No burnctl DB found. Run `burnctl scan` first.")
-        return
+    conn = _connect_or_exit()  # same shared fresh-install guard as brief/admin
     # NOTE: deliberately NO compute_daily_snapshots — calibrate is read-only.
     records = SnapshotUsageSource(conn).daily_records(days, account)
     result = calibrate(records)
@@ -2451,9 +2470,10 @@ def cmd_admin_prune_scan_state():
     rows whose source JSONL no longer exists on disk (F-02 cleanup).
     Hot-path integration deferred."""
     dry_run = "--dry-run" in sys.argv
-    from db import get_conn
     from scanner import _prune_orphaned_scan_state
-    conn = get_conn()
+    # Fresh-install guard — same shared idiom as brief (no DB -> friendly exit 0;
+    # nothing to prune when there is no data yet).
+    conn = _connect_or_exit()
     try:
         n = _prune_orphaned_scan_state(conn, dry_run=dry_run)
         if dry_run:

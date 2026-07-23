@@ -179,15 +179,27 @@ def _waste_aggregates(conn, window_days=30):
 
 
 def _compliance_aggregates(conn):
-    """Return {pattern_id: {"violations": n}} for status='violated'."""
+    """Return {pattern_id: {"violations": n}} for status='violated'.
+
+    ``compliance_events`` is a legacy table with no current writer; ``init_db``
+    does not create it, so a fresh install has no such table. Treat its absence
+    as "no compliance data" (empty) rather than crashing — a missing table is a
+    no-data case, not a failure.
+    """
+    import sqlite3
     cur = conn.cursor()
-    cur.execute("""
-        SELECT pattern_id, COUNT(*)
-        FROM compliance_events
-        WHERE status = 'violated'
-        GROUP BY pattern_id
-        HAVING COUNT(*) > 0
-    """)
+    try:
+        cur.execute("""
+            SELECT pattern_id, COUNT(*)
+            FROM compliance_events
+            WHERE status = 'violated'
+            GROUP BY pattern_id
+            HAVING COUNT(*) > 0
+        """)
+    except sqlite3.OperationalError as e:
+        if "no such table" in str(e).lower():
+            return {}
+        raise
     return {pid: {"violations": int(n)} for pid, n in cur.fetchall()}
 
 

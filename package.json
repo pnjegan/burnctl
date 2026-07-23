@@ -49,6 +49,7 @@
     "burn_rate.py",
     "cli.py",
     "claude_ai_tracker.py",
+    "coach.py",
     "claudemd_audit.py",
     "compact_audit.py",
     "config.py",
