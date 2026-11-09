@@ -116,9 +116,9 @@ def _resolve_tracked_projects(entries: list) -> List[str]:
         first parent that contains the basename wins.
 
     Basename collision example:
-      # "burnctl" basename + parents [~/projects, ~/code]
-      # → resolves to ~/projects/burnctl (first parent that has it)
-      # NOT ~/code/burnctl, even if it also exists
+      # "myapp" basename + parents [~/work, ~/code]
+      # → resolves to ~/work/myapp (first parent that has it)
+      # NOT ~/code/myapp, even if it also exists
     """
     resolved: List[str] = []
     for entry in entries:
@@ -220,9 +220,9 @@ def _discover_project_roots() -> List[str]:
       - none               → Tier-3 default scan only
 
     Basename resolution example (Tier 2):
-      "burnctl" basename + parents [~/projects, ~/code]
-        → resolves to ~/projects/burnctl (first parent that has it),
-        NOT ~/code/burnctl, even if both exist.
+      "myapp" basename + parents [~/work, ~/code]
+        → resolves to ~/work/myapp (first parent that has it),
+        NOT ~/code/myapp, even if both exist.
     """
     roots: List[str] = []
     consumed = False  # True only when Tier-2 fires (suppresses Tier-3)

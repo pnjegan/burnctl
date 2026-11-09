@@ -22,8 +22,8 @@ from datetime import datetime
 # ── CONFIG ────────────────────────────────────────────────────────────────────
 
 BASE_URL = "http://localhost:8080"
-DB_PATH = os.path.expanduser("~/projects/burnctl/data/usage.db")
-PROJ_DIR = os.path.expanduser("~/projects/burnctl")
+PROJ_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(PROJ_DIR, "data", "usage.db")
 RESULTS_FILE = "/tmp/burnctl_test_results.txt"
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────

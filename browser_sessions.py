@@ -61,7 +61,7 @@ def _load_db(db_path=None):
         return sqlite3.connect(db_path) if os.path.exists(db_path) else None
     candidates = [
         "data/usage.db",
-        os.path.expanduser("~/projects/burnctl/data/usage.db"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "usage.db"),
         os.path.expanduser("~/.burnctl/data/usage.db"),
     ]
     for p in candidates:

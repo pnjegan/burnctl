@@ -143,3 +143,8 @@ backups/
 # The audit log lives OUTSIDE the tree at ~/.burnctl/goal-audit.log so a
 # `git reset --hard` rollback cannot erase it.
 .goal-runs/
+
+# Operational handover for this host — harness/permission config, not product docs.
+# Keep out of the public repo (see docs/UNBLOCK-*.md).
+docs/UNBLOCK-*.md
+docs/unblock/
