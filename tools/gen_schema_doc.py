@@ -1,0 +1,202 @@
+#!/usr/bin/env python3
+"""Regenerate the table sections of docs/schema.md from the repo.
+
+docs/schema.md says "regenerate, do not hand-edit" and until now there was
+nothing to regenerate it with, which is how a hand-run extractor put 7 kB of
+test source into it. This is that generator.
+
+Everything from the SENTINEL line onward in the existing doc is prose and is
+preserved verbatim; everything above it is rebuilt.
+
+Two traps this encodes, both hit on 2026-11-09:
+  1. Parse db.py FIRST. Files are otherwise walked alphabetically and
+     burnctl_test_runner.py:440 has a single-line `CREATE TABLE settings (...)`
+     inside a test, which wins the table name over db.py.
+  2. Scan balanced parens, not `\\((.*?)\\n\\s*\\)`. That pattern needs a newline
+     before the closing paren, so a single-line CREATE TABLE runs past its real
+     terminator into unrelated code.
+Every column name is validated against ^\\w+$ and the whole match is rejected if
+one fails -- a check that only parses well-formed rows will skip corrupted ones
+and report success.
+
+Usage:  python3 tools/gen_schema_doc.py [--check]
+        --check exits 1 if the doc is stale, without writing.
+"""
+import datetime
+import glob
+import os
+import re
+import subprocess
+import sys
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DOC = os.path.join(REPO, "docs", "schema.md")
+SENTINEL = "<!-- MANUAL SECTIONS BELOW"
+IDENT = re.compile(r"^\w+$")
+CONSTRAINT_PREFIXES = ("PRIMARY KEY", "FOREIGN KEY", "UNIQUE(", "UNIQUE (",
+                       "CHECK", "CONSTRAINT")
+
+
+def _balanced(src, open_idx):
+    """Body between the parens starting at open_idx, or None if unbalanced."""
+    depth = 0
+    for j in range(open_idx, len(src)):
+        if src[j] == "(":
+            depth += 1
+        elif src[j] == ")":
+            depth -= 1
+            if depth == 0:
+                return src[open_idx + 1:j]
+    return None
+
+
+def _split_top(body):
+    out, depth, cur = [], 0, ""
+    for ch in body:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if ch == "," and depth == 0:
+            out.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    out.append(cur)
+    return out
+
+
+def parse_repo():
+    everything = sorted(f for f in glob.glob(os.path.join(REPO, "*.py"))
+                        if not os.path.basename(f).startswith("test"))
+    dbpy = os.path.join(REPO, "db.py")
+    ordered = ([dbpy] if dbpy in everything else []) + \
+              [f for f in everything if f != dbpy]
+
+    creates, migs, rejected = {}, {}, []
+
+    def add_mig(table, col, typedef, src_file):
+        migs.setdefault(table, [])
+        if col not in [c for c, _, _ in migs[table]]:
+            migs[table].append((col, " ".join(typedef.split()), src_file))
+
+    for path in ordered:
+        rel = os.path.relpath(path, REPO)
+        src = open(path, encoding="utf-8", errors="replace").read()
+
+        for m in re.finditer(
+                r"CREATE TABLE(?:\s+IF NOT EXISTS)?\s+([A-Za-z_]\w*)\s*(?=\()", src):
+            table = m.group(1)
+            if table in creates:
+                continue
+            body = _balanced(src, m.end())
+            if body is None:
+                rejected.append((rel, table, "unbalanced parens"))
+                continue
+            cols, cons, bad = [], [], None
+            for raw in _split_top(body):
+                col = " ".join(raw.split())
+                if not col:
+                    continue
+                if col.upper().startswith(CONSTRAINT_PREFIXES):
+                    cons.append(col)
+                    continue
+                parts = col.split(" ", 1)
+                if not IDENT.match(parts[0]):
+                    bad = parts[0]
+                    break
+                cols.append((parts[0], parts[1] if len(parts) > 1 else ""))
+            if bad is not None:
+                rejected.append((rel, table, f"non-identifier column {bad!r}"))
+                continue
+            if not cols:
+                rejected.append((rel, table, "no columns"))
+                continue
+            creates[table] = (rel, cols, cons)
+
+        for t, c, ty in re.findall(
+                r'ALTER TABLE\s+([A-Za-z_]\w*)\s+ADD COLUMN\s+([A-Za-z_]\w*)'
+                r'\s+([A-Za-z0-9_ ()\']*?)["\')]', src):
+            add_mig(t, c, ty, rel)
+        for m in re.finditer(
+                r"for col, typedef in \[(.*?)\]:\s*\n(.*?)ALTER TABLE (\w+) ADD COLUMN",
+                src, re.S):
+            for c, ty in re.findall(r'\(\s*"(\w+)"\s*,\s*"([^"]*)"\s*\)', m.group(1)):
+                add_mig(m.group(3), c, ty, rel)
+
+    return creates, migs, rejected
+
+
+def render(creates, migs):
+    sha = subprocess.run(["git", "-C", REPO, "rev-parse", "--short", "HEAD"],
+                         capture_output=True, text=True).stdout.strip() or "unknown"
+    order = sorted(creates, key=lambda t: (creates[t][0] != "db.py", t))
+    L = [
+        "<!-- Generated by tools/gen_schema_doc.py from CREATE TABLE statements,",
+        "     literal ALTER TABLE ADD COLUMN, and the `for col, typedef in [...]`",
+        "     migration loops. Do not hand-edit above the MANUAL SECTIONS line:",
+        "     run `python3 tools/gen_schema_doc.py` instead. -->",
+        "# burnctl — canonical DB schema",
+        "",
+        f"Generated at commit `{sha}` on {datetime.date.today().isoformat()}.",
+        "",
+        f"**{len(order)} tables.** The database is authoritative; code bends to it.",
+        "",
+        "> **`db.py` is not the whole schema.** Most columns arrive through `ALTER TABLE`",
+        "> migration loops rather than the original `CREATE TABLE`, so reading a",
+        "> `CREATE TABLE` block alone understates a table by as much as 20 columns",
+        "> (`sessions`). A live DB may also hold tables nothing in the repo creates —",
+        "> see the section below.",
+        "",
+        "## Tables",
+        "",
+        "| Table | Columns | Created in |",
+        "|---|---|---|",
+    ]
+    for t in order:
+        n = len(creates[t][1]) + len(migs.get(t, []))
+        L.append(f"| [`{t}`](#{t}) | {n} | `{creates[t][0]}` |")
+    L.append("")
+    for t in order:
+        rel, cols, cons = creates[t]
+        L += [f"## {t}", "", f"Created in `{rel}`.", "",
+              "| Column | Type | Origin |", "|---|---|---|"]
+        for c, ty in cols:
+            L.append(f"| `{c}` | {ty or '(untyped)'} | CREATE TABLE |")
+        for c, ty, mrel in migs.get(t, []):
+            L.append(f"| `{c}` | {ty} | migration in `{mrel}` |")
+        if cons:
+            L += ["", "Table constraints: " + "; ".join(f"`{x}`" for x in cons)]
+        L.append("")
+    return "\n".join(L) + "\n"
+
+
+def main():
+    creates, migs, rejected = parse_repo()
+    for rel, table, why in rejected:
+        print(f"rejected {table} in {rel}: {why}", file=sys.stderr)
+
+    existing = open(DOC, encoding="utf-8").read() if os.path.exists(DOC) else ""
+    idx = existing.find(SENTINEL)
+    manual = existing[idx:] if idx != -1 else ""
+    if idx == -1:
+        print(f"warning: no {SENTINEL!r} line in {DOC}; prose not preserved",
+              file=sys.stderr)
+    new = render(creates, migs) + ("\n" + manual if manual else "")
+
+    if "--check" in sys.argv:
+        if new != existing:
+            print("docs/schema.md is stale — run tools/gen_schema_doc.py", file=sys.stderr)
+            return 1
+        print("docs/schema.md is up to date")
+        return 0
+
+    open(DOC, "w", encoding="utf-8").write(new)
+    print(f"wrote {os.path.relpath(DOC, REPO)}: {len(creates)} tables, "
+          f"{sum(len(v[1]) for v in creates.values())} CREATE columns + "
+          f"{sum(len(v) for v in migs.values())} migration columns")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

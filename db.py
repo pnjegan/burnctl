@@ -369,6 +369,31 @@ def init_db():
             file=sys.stderr,
         )
 
+    # --- compliance events (four-tier compaction, prompt-cache, ...) ---
+    # Restored to init_db 2026-11-09. The table was being queried by cli.py
+    # (cmd_realstory), fix_rules.py and server.py but created by nothing, so
+    # every fresh install raised "OperationalError: no such table". It survived
+    # because the maintainer DB has held it since before it was dropped from
+    # here. Guarded by tests/test_fresh_db_tables.py.
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS compliance_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            detected_at INTEGER NOT NULL,
+            session_id TEXT,
+            project TEXT NOT NULL,
+            pattern_id TEXT NOT NULL,
+            severity TEXT NOT NULL,
+            status TEXT NOT NULL,
+            evidence TEXT,
+            auto_fix_available INTEGER DEFAULT 0,
+            hook_generated INTEGER DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_compliance_project
+            ON compliance_events(project, detected_at);
+        CREATE INDEX IF NOT EXISTS idx_compliance_pattern
+            ON compliance_events(pattern_id, status);
+    """)
+
     # --- v2-F5: MCP warning queue (bidirectional MCP) ---
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS mcp_warnings (
