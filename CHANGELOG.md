@@ -4125,6 +4125,15 @@ v4.5.5 hotfix-on-hotfix), plus a full-day narrative at
   entire life of that check. They are shipped attribution, the same class as the
   LICENSE copyright, so they are now exempt with that reason recorded. Earlier
   runs in this session reported "3 hits" where the truth was 7.
+- `burnctl backup` default directory — `cli.py:_default_backup_dir` returned a
+  hardcoded `/root/backups/claudash`. No non-root user can write there, it was
+  printed on every run, and it was the last remaining `burnctl-auditor` Check 3
+  blocker. Default is now `~/.burnctl/backups`; `BURNCTL_BACKUP_DIR` and the
+  legacy `CLAUDASH_BACKUP_DIR` are still honoured, because where backups land on
+  a given host is host configuration, not a shipped constant.
+  **The audit verdict is now GO** — all seven checks, zero blockers.
+  `tests/test_backup_dir_resolution.py` pins the resolution order and asserts
+  the default carries no branding. (d5474fc)
 - I3 invariant scope — `tools/hooks/check_invariants.py` walked every `.py` in
   the repo, while `INVARIANTS.md:32-38` scopes I3 to "any `.py` file it
   imports". Editing a test or a dev tool therefore blocked the stop hook with a
@@ -4168,6 +4177,18 @@ v4.5.5 hotfix-on-hotfix), plus a full-day narrative at
   exist in a live DB that `db.py` never creates.
 
 ### Known Issues / Not Done
+- **The host backup cron has been dead for 203 days.** Found while fixing the
+  backup path, and much more serious than it was. Both
+  `/root/projects/backups/claudash_backup_{hourly,daily}.sh` set `DB_PATH` to
+  `/root/projects/jk-usage-dashboard/data/usage.db`, which has not existed since
+  the rename to `burnctl`. The hourly script logs `WARNING: DB not found` and
+  **exits 0**, so cron has recorded success hourly ever since: last good backup
+  `[20260420_070002]`, first failure `[20260420_080001]`, 4,876 consecutive
+  failures. The live 81 MB `data/usage.db` has had no automated backup since
+  2026-04-20 — only two manual `cli.py backup` runs — while the daily script
+  faithfully `rclone copy`d the stale files offsite. Operator fix: a one-line
+  `DB_PATH` correction in each script, plus making the hourly one exit non-zero
+  on a missing DB so cron stops swallowing the failure. Backlog item 0.
 - `burnctl realstory` crashes on a fresh install: `cli.py:1355` queries
   `compliance_events` unguarded and no code creates that table
   (`OperationalError: no such table`). Reproduced against an empty DB. The deeper
