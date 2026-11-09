@@ -4043,3 +4043,33 @@ v4.5.5 hotfix-on-hotfix), plus a full-day narrative at
   Why: Standing rule — operator decides publish cadence separately from commits.
 
 - Diagnostic finding worth recording: original Fix F scope (ROI baseline freeze) had already mostly landed before this session. `_finalize_apply` shared between CLI (`fix_apply.py:228`) and HTTP (`server.py:1373`) writes `baseline_json` atomically; `fix_scoreboard.py:122` already passes stored `metrics_json` as `current` to `compute_delta` for point-in-time stability. Only the sort-key bug + the savings-gate were genuinely new work tonight.
+
+## [2026-06-25] Session 57 — Closed verification loop (criteria → frame → runner) + Other-bucket re-tag
+
+### Added
+- V6 core-clean scan contract — locks the JSONL→sessions ingest; real scanner.scan_jsonl_file, TEMP db, rowid read-back, live-fault-proven.
+  Why: V6 was the last deferred VERIFIABLE criterion; a clean baseline ingest is now re-runnable.
+  Files: tests/test_core_clean_scan_contract.py (cf3dc0d)
+- Six-axis checker frame — the 6 dimensions a stateless checker grades a worker run on, each with a concrete signal + defined red + grader tag.
+  Why: gives the loop runner an input that grades from signals, not the worker's say-so.
+  Files: docs/six-axis-checker-frame.md (6e1258e)
+- Stateless worker→checker loop runner — grades all 6 axes from concrete signals, per-run JSON ledger, abort-ceiling brake (stops the runner only, never CC), no auto-push, human accept-out.
+  Why: closes the verification loop now that V1–V6 criteria exist — a "done" can be re-graded in fresh context instead of trusted.
+  Files: loop_runner.py, tests/test_loop_runner_contract.py (e968ed6)
+
+### Fixed
+- B1 util/ vs tests/util/ collision — unittest discover failed on util.test_redact; renamed tests/util→tests/redact_util (top-level util, used by server.py, untouched). discover FAILED→132 OK; the suite is now a reliable gate.
+  Files: tests/redact_util/ (8e7b90b)
+- PROJECT_MAP "Other" attribution — config.py:PROJECT_MAP was {}; added WealthOS/Narthex/Digivault/SocialLearn. Reprocess moved Other -7,534; the deleted-file tail re-tagged via resolve_project on stored source_path, STATE-gated, rowid read-back (2,395 rows). show-other now only the subagents/-root tail.
+  Files: config.py (90548b7)
+
+### Architecture Decisions
+- X6 push-status corrected — branch IS on origin over HTTPS; push not blocked; SSH mismatch moot.
+  Impact: X6 reframed from "blocked" to "what reaches main." (c786366)
+- Worker never grades its own publish gate — loop runner reuses the real G5 gate's compiled patterns rather than duplicate credential literals (refused to allowlist itself when G5 blocked the commit).
+  Impact: detect-not-enforce + X3 held mechanically; the gate caught and improved the runner.
+
+### Known Issues / Not Done
+- Subagents/-root "Other" tail not attributed (explicitly out of scope this goal).
+- /dcf invoked but no company given — not run.
+- Deleted-file sessions only re-taggable via the source_path path, not `cli.py scan --reprocess` (their JSONL is gone).
