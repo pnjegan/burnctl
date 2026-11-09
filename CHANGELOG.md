@@ -4116,7 +4116,7 @@ v4.5.5 hotfix-on-hotfix), plus a full-day narrative at
   `burnctl_test_runner.py`, which `package.json` `files[]` does not ship.
   **This reverses the Session 57 `PROJECT_MAP` change deliberately** — June added the
   real names to recover `Other` attribution; privacy in shipped code wins, and the
-  attribution needs a local-override mechanism instead (see Known Issues).
+  mapping is kept by `account_projects` in the DB regardless (see Known Issues).
 
 ### Architecture Decisions
 - `burnctl-auditor` Checks 2 and 4 recalibrated; drift is resolved as `(table, column)`,
@@ -4141,9 +4141,15 @@ v4.5.5 hotfix-on-hotfix), plus a full-day narrative at
   (`OperationalError: no such table`). Reproduced against an empty DB. The deeper
   gap is that `tests/test_fresh_env_commands.py` runs a fresh *environment* against
   the *existing* database, so no test ever sees an empty DB.
-- `PROJECT_MAP = {}` costs the maintainer's own attribution — roughly 7,534 rows fall
-  back to `Other`. The fix is a gitignored local override (the `.burnctlignore`
-  pattern already used for leak patterns), not restoring names to shipped source.
+- **Correction to the entry above, verified post-deploy:** `PROJECT_MAP = {}` does
+  **not** cost attribution. `account_projects` in the DB is the source of truth and
+  still holds all 14 mappings, the four removed from `config.py` among them;
+  `db.sync_project_map_from_config` is UPSERT-only with no prune, so emptying the
+  config cannot delete them. Confirmed live after the restart — the newest 200
+  sessions still tag `Narthex` (47) and `burnctl` (9). The 7,534-row figure quoted
+  from Session 57 described a time before `account_projects` was populated and does
+  not apply. No local-override mechanism is needed: the names already live in the
+  database, which npm does not ship, and a new user seeds their own via `config.py`.
 - `cli.py:1451` returns a hardcoded `/root/backups/claudash` as the default backup
   directory, and prints it. No non-root user can write there, and it violates the
   no-Claudash-in-user-output rule. Kept deliberately so existing rclone sync is not
