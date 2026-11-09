@@ -79,6 +79,12 @@ Commands:
   insights      Show active insights
   window        Show 5-hour window status
   export        Export last 30 days to CSV
+  import-chats <conversations.json> --account LABEL
+                Import a claude.ai Data Export (Settings -> Privacy ->
+                Export data) into browser_chat_sessions + browser_samples.
+                Flags: --dry-run (parse only), --json, --db PATH.
+                Replaces the removed Chrome-History sync; rows are marked
+                browser='export'.
   backup        Hot-copy DB + JSON fixes export to ~/.burnctl/backups/
                 Flags: --output DIR (override path), --quiet (no stdout)
                 Retention: 24 hourly + 7 daily backups
@@ -2019,6 +2025,17 @@ def cmd_resume_audit():
     run_resume_audit(days)
 
 
+def cmd_import_chats():
+    """`burnctl import-chats <conversations.json> --account LABEL`.
+
+    Ingests a user-initiated claude.ai Data Export. Replaces the EDR-flagged
+    Chrome-History reader dropped from the tarball in v4.5.8; argument parsing
+    lives in the module so the same entry point works standalone.
+    """
+    from browser_chat_import import cmd_import_chats as _run
+    sys.exit(_run(sys.argv[2:]))
+
+
 def cmd_variance():
     """`burnctl variance [project]` — session cost variance profiler."""
     from variance_profiler import run_variance
@@ -2556,6 +2573,7 @@ def main():
         "insights": cmd_insights,
         "window": cmd_window,
         "export": cmd_export,
+        "import-chats": cmd_import_chats,
         "waste": cmd_waste,
         "fixes": cmd_fixes,
         "measure": cmd_measure,

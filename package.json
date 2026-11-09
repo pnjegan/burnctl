@@ -45,6 +45,7 @@
     "baseline_scanner.py",
     "bin/burnctl.js",
     "brief.py",
+    "browser_chat_import.py",
     "browser_sessions.py",
     "burn_rate.py",
     "cli.py",
