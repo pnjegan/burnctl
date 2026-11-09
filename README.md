@@ -276,7 +276,7 @@ directory, and its **native** `context_window.used_percentage`). burnctl
 renders a live, **project-aware** context gauge from that field:
 
 ```
-[Opus 4.8] Tidify ctx 72% ███████░░░ 🔴 → /clear · Tidify avg 2.8 compact/sess
+[Opus 4.8] MyApp ctx 72% ███████░░░ 🔴 → /clear · MyApp avg 2.8 compact/sess
 ```
 
 - **Real context %** — straight from Claude Code's own `used_percentage`,
@@ -285,7 +285,7 @@ renders a live, **project-aware** context gauge from that field:
   `→ /clear` cue. Display only: it never pauses, blocks, or compacts CC.
 - **Project-aware nudge** — once context is filling (`≥50%`), it appends how
   often *this* project has historically compacted, e.g.
-  `Tidify avg 2.8 compact/sess` (avg compactions/session over the last 30d,
+  `MyApp avg 2.8 compact/sess` (avg compactions/session over the last 30d,
   from your own `usage.db`). This is the one thing a live-only statusline
   can't show — it needs per-project history, which burnctl already has.
   Unknown projects or projects with no compaction history fall back to the

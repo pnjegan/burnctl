@@ -473,8 +473,8 @@ def scan_jsonl_file(filepath, folder_path, conn, source_path="", project_map=Non
             # Skip compaction detection on sub-agent files: sub-agents run in
             # short isolated contexts and their turn-to-turn token drops are
             # NOT user-initiated /compact events. Firing compaction_detected=1
-            # on them produces false positives (e.g. Brainworks session
-            # fb516355 had 13 "compactions" flagged — all sub-agent noise).
+            # on them produces false positives (e.g. one sub-agent session
+            # had 13 "compactions" flagged — all sub-agent noise).
             if session_data and session_data[0].get("is_subagent") == 1:
                 continue
             for evt_idx, before, after in _detect_compaction(session_data):

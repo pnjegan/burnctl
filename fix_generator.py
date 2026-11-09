@@ -234,8 +234,8 @@ def _excluded(name):
 
 
 def _normalize(s):
-    """Lowercase + strip non-alphanumerics. Lets 'CareerOps' match
-    'career-ops', 'career_ops', etc."""
+    """Lowercase + strip non-alphanumerics. Lets 'MyProject' match
+    'my-project', 'my_project', etc."""
     return "".join(c for c in s.lower() if c.isalnum())
 
 
@@ -254,19 +254,17 @@ def _check_dir(directory):
 def find_claude_md(project, conn=None):
     """Return (path, contents) or (None, '') if nothing found. Never raises.
 
-    DB project names ('Brainworks', 'Tidify', 'WikiLoop', 'CareerOps', ...)
-    rarely match the on-disk dir verbatim — projects get versioned
-    (Tidify15), live under non-projects roots (~/wikiloop), use kebab-case
-    (career-ops), or get renamed entirely (burnctl → burnctl).
+    DB project names rarely match the on-disk dir verbatim — projects get
+    versioned (myproject15), live under non-projects roots (~/myproject),
+    use kebab-case (my-project), or get renamed entirely.
 
     Search order (first hit wins):
       0. _PROJECT_ALIASES override (~/projects/<aliased>/...)
       1. ~/.claude/projects/<encoded>/CLAUDE.md  (legacy; rarely populated)
       2-4. Exact ~/projects/<project>/ and lowercase variant
-      5-6. Versioned glob ~/projects/<project>*/, descending (picks Tidify15)
+      5-6. Versioned glob ~/projects/<project>*/, descending (picks highest)
       7. HOME walk depth 2 with normalized substring matching
-         (catches WikiLoop→~/wikiloop, Knowl→~/newprojects/knowl,
-          CareerOps→~/resumestiffs/career-ops)
+         (catches MyProject→~/myproject, kebab-case and non-projects roots)
       8. Global ~/.claude/CLAUDE.md fallback
     """
     if not project:
@@ -312,7 +310,7 @@ def find_claude_md(project, conn=None):
                 return _safe_read(p)
 
     # (5/6) Versioned/prefix glob under ~/projects/. Descending sort picks
-    # Tidify15 over Tidify14 over Tidify12.
+    # e.g. myproject15 over myproject14 over myproject12.
     if os.path.isdir(projects_dir):
         try:
             entries = os.listdir(projects_dir)

@@ -66,16 +66,7 @@ ACCOUNTS = {
 # take effect on `cli.py scan --reprocess` (which UPSERTs into the
 # account_projects table).
 
-PROJECT_MAP = {
-    "WealthOS":    {"keywords": ["wealth-journal", "wealth-tracker"],
-                    "account": "personal_max"},
-    "Narthex":     {"keywords": ["narthex"],
-                    "account": "personal_max"},
-    "Digivault":   {"keywords": ["digivaul"],
-                    "account": "personal_max"},
-    "SocialLearn": {"keywords": ["socialmedialearn"],
-                    "account": "personal_max"},
-}
+PROJECT_MAP = {}
 
 UNKNOWN_PROJECT = "Other"
 
@@ -119,29 +110,15 @@ COST_TARGETS = {}
 # next pass. Keyed by project name — add entries for your own projects.
 # Fallback is COMPACT_INSTRUCTIONS["default"].
 COMPACT_INSTRUCTIONS = {
-    "Tidify": (
-        "/compact Focus on: current file being normalized, "
-        "column mapping decisions, validation errors seen"
-    ),
-    "WikiLoop": (
-        "/compact Focus on: articles being compiled, "
-        "WikiScore results, pending gap topics"
-    ),
+    # Add per-project entries keyed by your project name to get a tailored
+    # /compact suggestion. Example:
+    #   "MyProject": (
+    #       "/compact Focus on: current file being edited, "
+    #       "key design decisions, validation errors seen"
+    #   ),
     "burnctl": (
         "/compact Focus on: current bug/feature in progress, "
         "files modified this session, verification gates remaining"
-    ),
-    "Claudash": (
-        "/compact Focus on: current bug/feature in progress, "
-        "files modified this session, verification gates remaining"
-    ),
-    "Brainworks": (
-        "/compact Focus on: current component being edited, "
-        "API shape decisions, pending test fixtures"
-    ),
-    "CareerOps": (
-        "/compact Focus on: current candidate pipeline stage, "
-        "filter rules in play, roster columns being normalized"
     ),
     "default": (
         "/compact Focus on: [current task] "

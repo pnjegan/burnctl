@@ -677,7 +677,7 @@ def generate_insights(conn=None):
     # Fires when a project's sessions spend a high fraction of tool calls
     # on Read (proxy for upfront skill/doc loading). Skills loaded in the
     # first few turns but never re-referenced = ~6.9K tokens/session burned.
-    # Calibrated from real data: Tidify 28% read-ratio, WikiLoop 21%.
+    # Calibrated from real data: read-heavy projects observed at ~20-30% read-ratio.
     # read_count + tool_call_count are denormalized per-session on every
     # turn row, so collapse to session granularity first via a CTE.
     try:

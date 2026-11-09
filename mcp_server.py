@@ -488,7 +488,7 @@ TOOLS = [
             "properties": {
                 "project_name": {
                     "type": "string",
-                    "description": "The project name as shown in burnctl (e.g. 'WikiLoop', 'Tidify').",
+                    "description": "The project name as shown in burnctl (e.g. 'MyApp', 'my-project').",
                 },
             },
             "required": ["project_name"],

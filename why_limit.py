@@ -56,49 +56,19 @@ def load_db():
     return None
 
 
-# Known-private names live alongside the maintainer-leak patterns in the
-# .burnctlignore convention. We reuse the same loader so both checks stay
-# in sync. Default: mask the names currently in the maintainer's live DB.
-_DEFAULT_PRIVATE_NAMES = (
-    "Tidify", "Claudash", "Brainworks", "WikiLoop",
-    "CareerOps", "Knowl",
-)
-
-
-def _load_private_names():
-    """Load additional private names from .burnctlignore-private.
-
-    One name per line, comments with `#`. Falls back to the baked-in list
-    when the file doesn't exist. Combined with defaults."""
-    repo = os.path.dirname(os.path.abspath(__file__))
-    f = os.path.join(repo, ".burnctlignore-private")
-    extra = []
-    if os.path.isfile(f):
-        try:
-            with open(f, "r") as fh:
-                for line in fh:
-                    line = line.strip()
-                    if line and not line.startswith("#"):
-                        extra.append(line)
-        except OSError:
-            pass
-    return tuple(set(_DEFAULT_PRIVATE_NAMES) | set(extra))
-
-
 def _mask_project(name, mask_map, reveal):
-    """Return display label. Masks known-private names to 'Project N'."""
+    """Return display label. Privacy-by-default: every real project name is
+    masked to a stable 'Project N' so screenshots and blog posts never leak a
+    label. The owner of the DB passes --reveal to see the actual names."""
     if reveal:
         return name or "Unknown"
     if not name:
         return "Unknown"
-    private = _load_private_names()
-    if name in private:
-        if name not in mask_map:
-            mask_map[name] = f"Project {len(mask_map) + 1}"
-        return mask_map[name]
     if name == "Other" or name == "Unknown":
         return "Browser / Unmatched"
-    return name
+    if name not in mask_map:
+        mask_map[name] = f"Project {len(mask_map) + 1}"
+    return mask_map[name]
 
 
 def _display_project_sql():
