@@ -1,0 +1,5 @@
+# Compiled bytecode must never ship: package.json files[] lists tools/hooks/ as a
+# directory, which overrides the root .npmignore and pulls in __pycache__.
+# A subdirectory .npmignore is still honored, and npm never publishes this file.
+__pycache__/
+*.pyc
