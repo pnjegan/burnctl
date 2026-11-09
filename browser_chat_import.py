@@ -133,6 +133,105 @@ def _conversations(obj):
     )
 
 
+def _starts_bare_array(path):
+    """True if the first non-whitespace byte is '[', i.e. the streamable form."""
+    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+        while True:
+            ch = fh.read(1)
+            if not ch:
+                return False
+            if not ch.isspace():
+                return ch == "["
+
+
+def iter_conversations(path, chunk_size=1 << 20):
+    """Yield conversations one at a time from a bare JSON array.
+
+    A real export is a single array hundreds of megabytes long -- the
+    2026-11-09 one was 627,512,617 bytes -- and `json.load` on that needs
+    several gigabytes of Python objects. This walks the array with a sliding
+    buffer, so peak memory is one conversation plus one chunk.
+
+    Only the bare-array form streams. An object-wrapped export keeps the
+    whole-file path in `run_import`; that form is small by construction.
+
+    Safe because every element is an object: `raw_decode` cannot mistake a
+    truncated `{...}` for a complete value, so an incomplete tail always
+    raises rather than decoding short. That would not hold for an array of
+    bare numbers, where a cut-off `1234` decodes cleanly as `123`.
+    """
+    decoder = json.JSONDecoder()
+    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+        buf = ""
+        pos = 0
+
+        def refill():
+            """Drop the consumed prefix, read one more chunk. False at EOF."""
+            nonlocal buf, pos
+            more = fh.read(chunk_size)
+            buf = buf[pos:] + more
+            pos = 0
+            return bool(more)
+
+        # Opening bracket.
+        while True:
+            while pos < len(buf) and buf[pos].isspace():
+                pos += 1
+            if pos < len(buf):
+                break
+            if not refill():
+                raise ValueError("empty export file")
+        if buf[pos] != "[":
+            raise ValueError("not a bare JSON array")
+        pos += 1
+
+        while True:
+            # Skip whitespace and element separators.
+            while True:
+                while pos < len(buf) and (buf[pos].isspace() or buf[pos] == ","):
+                    pos += 1
+                if pos < len(buf):
+                    break
+                if not refill():
+                    # Ran out before the closing bracket.
+                    raise ValueError(
+                        "truncated export: end of file before the array closed "
+                        "-- the download is incomplete, re-download it")
+            if buf[pos] == "]":
+                return
+
+            # Decode exactly one conversation, reading more until it completes.
+            while True:
+                try:
+                    obj, end = decoder.raw_decode(buf, pos)
+                except ValueError:
+                    if not refill():
+                        raise ValueError(
+                            "truncated export: incomplete JSON at end of file "
+                            "-- the download is incomplete, re-download it")
+                    continue
+                break
+            yield obj
+            pos = end
+
+            # Keep the buffer from growing to the size of the file.
+            if pos >= chunk_size:
+                buf = buf[pos:]
+                pos = 0
+
+
+def _batched(iterable, size):
+    """Yield lists of at most `size` items."""
+    batch = []
+    for item in iterable:
+        batch.append(item)
+        if len(batch) >= size:
+            yield batch
+            batch = []
+    if batch:
+        yield batch
+
+
 def parse_conversations(obj, account):
     """(sessions, messages, skipped) from an export object.
 
@@ -231,8 +330,20 @@ def parse_conversations(obj, account):
 
 
 def upsert_sessions(conn, sessions):
-    """Upsert session rows. Same statement as POST /api/browser-chats
-    (server.py:1421) so the HTTP and local paths stay byte-identical."""
+    """Upsert session rows, mirroring POST /api/browser-chats (server.py:1421).
+
+    One deliberate difference from the endpoint: this also sets `browser` on
+    conflict. The endpoint never needs to, because a browser extension
+    re-pushing a row always reports the same browser. An export does not --
+    136 of the 646 conversations in the 2026-11-09 export already existed as
+    Chrome/Vivaldi history rows. Leaving `browser` alone would hand those rows
+    export-derived numbers (page_visits becoming a message count, duration_min
+    becoming the export window) while still labelling them as browser history,
+    so `WHERE browser <> 'export'` would no longer mean what it says.
+
+    `account` is deliberately NOT overwritten: it identifies which claude.ai
+    login owned the chat, which an export does not change.
+    """
     if not sessions:
         return 0
     rows = [(
@@ -247,6 +358,7 @@ def upsert_sessions(conn, sessions):
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(chat_uuid) DO UPDATE SET
              title = excluded.title,
+             browser = excluded.browser,
              last_visit = excluded.last_visit,
              duration_min = excluded.duration_min,
              page_visits = excluded.page_visits,
@@ -285,44 +397,74 @@ def upsert_messages(conn, messages):
     return len(rows)
 
 
-def run_import(path, account, conn=None, dry_run=False, db_path=None):
+def run_import(path, account, conn=None, dry_run=False, db_path=None,
+               batch_size=50):
     """Parse `path` and (unless dry_run) write it. Returns a summary dict.
 
     dry_run is STATE 2: it parses, reports exactly what would be written, and
     touches nothing.
-    """
-    with open(path, "r", encoding="utf-8", errors="replace") as fh:
-        obj = json.load(fh)
 
-    sessions, messages, skipped = parse_conversations(obj, account)
+    The array is streamed and written in batches of `batch_size` conversations,
+    so a 600 MB export never materialises in memory. Each batch is its own
+    commit: an interrupted import leaves the batches that already landed, and
+    because every write is an upsert keyed on chat_uuid / message_uuid,
+    re-running the same file completes it without duplicating anything.
+    """
+    if not account:
+        raise ValueError("account is required: browser_chat_sessions.account "
+                         "is NOT NULL and an export does not name its account")
+
     summary = {
         "dry_run": bool(dry_run),
-        "sessions": len(sessions),
-        "messages": len(messages),
-        "skipped": skipped,
+        "sessions": 0,
+        "messages": 0,
+        "skipped": 0,
         "account": account,
-        "first_visit": min((s["first_visit"] for s in sessions), default=None),
-        "last_visit": max((s["last_visit"] for s in sessions), default=None),
+        "first_visit": None,
+        "last_visit": None,
+        "batches": 0,
     }
-    if dry_run:
-        return summary
 
-    owned = conn is None
-    if owned:
-        conn = load_db(db_path)
-        if conn is None:
-            raise RuntimeError(
-                "no usage.db found (looked in data/usage.db and "
-                "~/.burnctl/data/usage.db) -- run burnctl scan first")
-    try:
-        upsert_sessions(conn, sessions)
-        upsert_messages(conn, messages)
-        conn.commit()
-    except sqlite3.Error:
-        conn.rollback()
-        raise
-    finally:
+    if _starts_bare_array(path):
+        batches = _batched(iter_conversations(path), batch_size)
+    else:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            obj = json.load(fh)
+        batches = _batched(_conversations(obj), batch_size)
+
+    owned = False
+    if not dry_run:
+        owned = conn is None
         if owned:
+            conn = load_db(db_path)
+            if conn is None:
+                raise RuntimeError(
+                    "no usage.db found (looked in data/usage.db and "
+                    "~/.burnctl/data/usage.db) -- run burnctl scan first")
+    try:
+        for batch in batches:
+            sessions, messages, skipped = parse_conversations(batch, account)
+            summary["batches"] += 1
+            summary["sessions"] += len(sessions)
+            summary["messages"] += len(messages)
+            summary["skipped"] += skipped
+            for s in sessions:
+                first, last = summary["first_visit"], summary["last_visit"]
+                if first is None or s["first_visit"] < first:
+                    summary["first_visit"] = s["first_visit"]
+                if last is None or s["last_visit"] > last:
+                    summary["last_visit"] = s["last_visit"]
+            if dry_run:
+                continue
+            try:
+                upsert_sessions(conn, sessions)
+                upsert_messages(conn, messages)
+                conn.commit()
+            except sqlite3.Error:
+                conn.rollback()
+                raise
+    finally:
+        if owned and conn is not None:
             conn.close()
     return summary
 

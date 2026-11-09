@@ -270,5 +270,191 @@ class ShapeTolerance(unittest.TestCase):
         self.assertIsNone(bci.to_epoch("not a date"))
 
 
+class StreamingContract(unittest.TestCase):
+    """A real export does not fit in memory, so the array must be walked.
+
+    The 2026-11-09 export of this account was one JSON array of 627,512,617
+    bytes inside conversations-000.zip. `json.load` on that needs several GB of
+    Python objects; the VPS had 2.9 GB available with pm2 serving the dashboard,
+    so a whole-file load is not an option that merely runs slowly -- it OOMs and
+    can take the dashboard with it. Peak memory must stay at one conversation
+    plus one read chunk, no matter how long the array is.
+    """
+
+    def test_streaming_yields_exactly_what_a_whole_file_load_would(self):
+        path = _write_export(EXPORT)
+        try:
+            self.assertEqual(EXPORT, list(bci.iter_conversations(path)))
+        finally:
+            os.unlink(path)
+
+    def test_streaming_is_correct_across_read_boundaries(self):
+        # chunk_size=1 forces every object to span many reads. A sliding-buffer
+        # decoder that mishandles a boundary fails here and nowhere else.
+        path = _write_export(EXPORT)
+        try:
+            self.assertEqual(EXPORT, list(bci.iter_conversations(path, chunk_size=1)))
+        finally:
+            os.unlink(path)
+
+    def test_streaming_yields_before_reaching_end_of_file(self):
+        # The point of the generator: the first conversation is available long
+        # before the last one is read. A json.load wearing a generator's clothes
+        # would pass every test above and fail this one.
+        big = [dict(EXPORT[0], uuid=f"u{i}") for i in range(400)]
+        path = _write_export(big)
+        try:
+            gen = bci.iter_conversations(path, chunk_size=64)
+            self.assertEqual("u0", next(gen)["uuid"])
+            self.assertEqual(399, sum(1 for _ in gen))
+        finally:
+            os.unlink(path)
+
+    def test_streaming_reports_a_truncated_file_instead_of_silently_stopping(self):
+        # A part-file download that dies mid-array must not look like a
+        # successful import of whatever arrived.
+        path = _write_export(EXPORT)
+        try:
+            with open(path, "r+", encoding="utf-8") as fh:
+                fh.truncate(os.path.getsize(path) // 2)
+            with self.assertRaises(ValueError):
+                list(bci.iter_conversations(path))
+        finally:
+            os.unlink(path)
+
+    def test_large_array_imports_in_batches(self):
+        conn = _mkdb()
+        big = []
+        for i in range(60):
+            c = json.loads(json.dumps(EXPORT[0]))
+            c["uuid"] = f"u{i}"
+            for j, m in enumerate(c["chat_messages"]):
+                m["uuid"] = f"u{i}-m{j}"
+            big.append(c)
+        path = _write_export(big)
+        try:
+            summary = bci.run_import(path, account="personal_max",
+                                     conn=conn, batch_size=7)
+        finally:
+            os.unlink(path)
+        self.assertEqual(60, summary["sessions"])
+        self.assertEqual(180, summary["messages"])
+        self.assertEqual(60, conn.execute(
+            "SELECT COUNT(*) FROM browser_chat_sessions").fetchone()[0])
+        self.assertEqual(180, conn.execute(
+            "SELECT COUNT(*) FROM browser_samples").fetchone()[0])
+
+    def test_window_is_still_correct_when_computed_across_batches(self):
+        # first_visit/last_visit were a min()/max() over one in-memory list;
+        # batching turns them into a running fold, which is easy to get wrong.
+        conn = _mkdb()
+        whole, _, _ = bci.parse_conversations(EXPORT, account="a")
+        path = _write_export(EXPORT)
+        try:
+            s = bci.run_import(path, account="a", conn=conn, batch_size=1)
+        finally:
+            os.unlink(path)
+        self.assertEqual(min(x["first_visit"] for x in whole), s["first_visit"])
+        self.assertEqual(max(x["last_visit"] for x in whole), s["last_visit"])
+
+    def test_batched_dry_run_still_writes_nothing(self):
+        conn = _mkdb()
+        big = [dict(json.loads(json.dumps(EXPORT[0])), uuid=f"u{i}")
+               for i in range(20)]
+        path = _write_export(big)
+        try:
+            s = bci.run_import(path, account="a", conn=conn,
+                               dry_run=True, batch_size=3)
+        finally:
+            os.unlink(path)
+        self.assertTrue(s["dry_run"])
+        self.assertEqual(20, s["sessions"])
+        self.assertEqual(0, conn.execute(
+            "SELECT COUNT(*) FROM browser_chat_sessions").fetchone()[0])
+
+    def test_object_wrapped_export_does_not_regress(self):
+        # Not streamable, and must still import: the wrapper form is small by
+        # construction, so it keeps the whole-file path.
+        conn = _mkdb()
+        path = _write_export({"conversations": EXPORT})
+        try:
+            s = bci.run_import(path, account="a", conn=conn)
+        finally:
+            os.unlink(path)
+        self.assertEqual(2, s["sessions"])
+        self.assertEqual(2, conn.execute(
+            "SELECT COUNT(*) FROM browser_chat_sessions").fetchone()[0])
+
+
+class MemoryBudget(unittest.TestCase):
+    def test_default_batch_size_is_small_enough_for_a_real_export(self):
+        import inspect
+        default = inspect.signature(bci.run_import).parameters["batch_size"].default
+        # A batch holds that many raw conversations in memory at once. The
+        # 2026-11-09 export averaged ~930 KB of JSON per conversation, which
+        # Python inflates several-fold: batch_size=500 measured 1.55 GB peak
+        # RSS on a 6 GB box already running pm2 and 3 GB into swap. The default
+        # has to stay conservative, because the person running this command is
+        # not going to pass --batch-size to avoid an OOM they cannot predict.
+        self.assertLessEqual(default, 100)
+
+
+class ProvenanceOnConflict(unittest.TestCase):
+    """An export that overwrites a history row must relabel that row.
+
+    136 of the 646 conversations in the 2026-11-09 export already existed as
+    Chrome/Vivaldi rows from the retired history feed. The upsert refreshes
+    page_visits and duration_min, and those two columns mean different things
+    depending on the source -- page visits vs messages, browsing window vs
+    conversation window. A row carrying export-derived numbers must therefore
+    report browser='export', or `WHERE browser <> 'export'` quietly includes
+    export data and every history-vs-export comparison is wrong.
+    """
+
+    HIST = """INSERT INTO browser_chat_sessions
+                (chat_uuid, title, account, browser, first_visit, last_visit,
+                 duration_min, page_visits)
+              VALUES (?, 'old title', 'hist_acct', 'Vivaldi', 1, 2, 0, 7)"""
+
+    def _import_over(self, conn, *chat_uuids):
+        for u in chat_uuids:
+            conn.execute(self.HIST, (u,))
+        conn.commit()
+        sessions, _, _ = bci.parse_conversations(EXPORT, account="personal_max")
+        bci.upsert_sessions(conn, sessions)
+
+    def test_overwritten_history_row_is_relabelled_as_export(self):
+        conn = _mkdb()
+        uuid = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
+        self._import_over(conn, uuid)
+        row = conn.execute(
+            "SELECT browser, page_visits, title FROM browser_chat_sessions "
+            "WHERE chat_uuid=?", (uuid,)).fetchone()
+        self.assertEqual("export", row["browser"])
+        self.assertEqual(3, row["page_visits"])          # messages, not visits
+        self.assertEqual("Burnctl project update", row["title"])
+
+    def test_history_rows_absent_from_the_export_are_left_alone(self):
+        conn = _mkdb()
+        self._import_over(conn, "not-in-the-export")
+        row = conn.execute(
+            "SELECT browser, page_visits, title FROM browser_chat_sessions "
+            "WHERE chat_uuid=?", ("not-in-the-export",)).fetchone()
+        self.assertEqual("Vivaldi", row["browser"])
+        self.assertEqual(7, row["page_visits"])
+        self.assertEqual("old title", row["title"])
+
+    def test_account_is_not_overwritten_on_conflict(self):
+        # account says which claude.ai login owned the chat; an export does not
+        # change that, and --account is a label the operator typed.
+        conn = _mkdb()
+        uuid = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
+        self._import_over(conn, uuid)
+        row = conn.execute(
+            "SELECT account FROM browser_chat_sessions WHERE chat_uuid=?",
+            (uuid,)).fetchone()
+        self.assertEqual("hist_acct", row["account"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
