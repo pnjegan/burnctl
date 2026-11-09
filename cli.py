@@ -1434,21 +1434,29 @@ def cmd_realstory():
 
 
 def _default_backup_dir():
-    """Default backup directory.
+    """Default backup directory: ``~/.burnctl/backups``.
 
-    Matches the pre-v3.3 cron + rclone path so `cli.py backup` output is
-    automatically picked up by the existing offsite sync (Google Drive /
-    other rclone remotes).
+    Resolution order:
+      1. ``--output DIR`` on the CLI
+      2. ``BURNCTL_BACKUP_DIR`` env var
+      3. ``CLAUDASH_BACKUP_DIR`` env var (still honoured for upgraders)
+      4. ``~/.burnctl/backups``
 
-    Override via `--output DIR` on the CLI or `BURNCTL_BACKUP_DIR` env var.
-    Legacy `CLAUDASH_BACKUP_DIR` still honored for upgraders.
-    Default path stays `/root/backups/claudash` so existing rclone offsite
-    sync keeps writing to the same location through the rebrand.
+    The default used to be a hardcoded ``/root/backups/<brand>`` so that an
+    existing rclone offsite sync kept picking the files up. That is wrong for
+    everyone who is not the maintainer: no non-root user can write there, and
+    the path was printed on every run. An operator who wants the files inside
+    an rclone-swept tree sets ``BURNCTL_BACKUP_DIR`` instead -- host layout is
+    host configuration, not a shipped constant.
+
+    Upgraders: if your offsite sync watches a specific directory, set
+    ``BURNCTL_BACKUP_DIR`` to it before the next backup, or the files will land
+    in ``~/.burnctl/backups`` and your sync will quietly copy nothing new.
     """
     override = os.environ.get("BURNCTL_BACKUP_DIR") or os.environ.get("CLAUDASH_BACKUP_DIR")
     if override:
         return os.path.expanduser(override)
-    return "/root/backups/claudash"
+    return os.path.expanduser(os.path.join("~", ".burnctl", "backups"))
 
 
 def _backup_filename(now=None):
