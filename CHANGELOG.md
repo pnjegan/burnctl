@@ -4073,3 +4073,84 @@ v4.5.5 hotfix-on-hotfix), plus a full-day narrative at
 - Subagents/-root "Other" tail not attributed (explicitly out of scope this goal).
 - /dcf invoked but no company given — not run.
 - Deleted-file sessions only re-taggable via the source_path path, not `cli.py scan --reprocess` (their JSONL is gone).
+
+## [2026-11-09] Session 58 — NO-GO unblock: canonical schema, path fixes, privacy scrub
+
+### Added
+- `docs/schema.md` — canonical DB schema, generated from `db.py` plus its four
+  `for col, typedef in [...]` migration loops. Self-check: 24 tables / 232 columns
+  round-trip both directions, 0 mismatches against the live DB.
+  Why: Check 4 schema disputes were unresolvable without an authority, and the
+  answer had been sitting at the wrong path since April (see Architecture below).
+  Files: docs/schema.md, schema.md (now a redirect) (8a674e9)
+
+### Fixed
+- Hardcoded maintainer DB path — `browser_sessions.py:64` and `fix_rules.py:30`
+  resolved `usage.db` via `expanduser("~/projects/burnctl/...")`, which resolves for
+  nobody but the maintainer. Both now derive from `__file__`; verified connecting
+  from a neutral cwd where the old path returned `None`. Same fix in
+  `burnctl_test_runner.py`; `baseline_scanner.py` docstrings genericised.
+  Auditor Check 2: 9 hits -> 0.
+  Files: browser_sessions.py, fix_rules.py, burnctl_test_runner.py, baseline_scanner.py (8a674e9)
+- Compiled bytecode shipped to npm — `tools/hooks/__pycache__/state_gate.cpython-312.pyc`
+  was in the tarball. The root `.npmignore` excludes `__pycache__/`, but a `files`
+  array in `package.json` overrides it and `tools/hooks/` is listed as a directory.
+  Added a subdirectory `.npmignore`, which npm does honour. 51 files -> 50.
+  Files: tools/hooks/.npmignore (5683ee5)
+- Waste rows for sessions inactive beyond the scan window were never evicted —
+  `detect_all` gates every detector on the window, so rows from an earlier pass, or
+  written by a stale pm2 process running pre-window code, sat in the table
+  permanently. Adds self-heal eviction plus cost-integrity tests.
+  Files: waste_patterns.py, tests/test_waste_events_cost_integrity.py
+
+### Changed
+- Maintainer project names removed from shipped code. `PROJECT_MAP` is `{}` with a
+  worked example; `COMPACT_INSTRUCTIONS` keeps only `burnctl` and `default`;
+  `why_limit.py` drops its hardcoded `("Tidify", "Claudash", "Brainworks",
+  "WikiLoop", "CareerOps", "Knowl")` list and instead masks **every** project to a
+  stable `Project N`, with `--reveal` for the DB owner. Comments and API examples in
+  `fix_generator.py`, `insights.py`, `mcp_server.py`, `scanner.py` and `README.md`
+  genericised.
+  Why: masking by default needs no list to maintain and cannot fall behind reality,
+  which the old allowlist already had. Remaining `Tidify` references are in
+  `burnctl_test_runner.py`, which `package.json` `files[]` does not ship.
+  **This reverses the Session 57 `PROJECT_MAP` change deliberately** — June added the
+  real names to recover `Other` attribution; privacy in shipped code wins, and the
+  attribution needs a local-override mechanism instead (see Known Issues).
+
+### Architecture Decisions
+- `burnctl-auditor` Checks 2 and 4 recalibrated; drift is resolved as `(table, column)`,
+  never as a bare identifier. `token_cost` **is** a real column
+  (`waste_events.token_cost`) and `fix_id` **is** a real column
+  (`fix_measurements.fix_id`); matching bare names reported ~150 legitimate lines as
+  drift and held the gate at NO-GO on process grounds. The 2026-11-08 audit reported
+  Check 4 FAIL while itself noting "token_cost is real column db.py:294".
+  Agent definitions live outside the repo and are loaded per session, so the change
+  takes effect for the nightly cron, not for subagents of a running session.
+- One schema document, at the path the tooling names. A root `schema.md` had carried
+  the correct table-scoped note since 2026-04-20, but `burnctl-schema-guard` and
+  `burnctl-auditor` both reference `docs/schema.md`, which did not exist. The
+  correction sat unread for seven months while Check 4 fired on it nightly.
+- `db.py` is not the whole schema. Most columns arrive through migration loops, so a
+  `CREATE TABLE` block alone understates `sessions` by 20 columns, and four tables
+  exist in a live DB that `db.py` never creates.
+
+### Known Issues / Not Done
+- `burnctl realstory` crashes on a fresh install: `cli.py:1355` queries
+  `compliance_events` unguarded and no code creates that table
+  (`OperationalError: no such table`). Reproduced against an empty DB. The deeper
+  gap is that `tests/test_fresh_env_commands.py` runs a fresh *environment* against
+  the *existing* database, so no test ever sees an empty DB.
+- `PROJECT_MAP = {}` costs the maintainer's own attribution — roughly 7,534 rows fall
+  back to `Other`. The fix is a gitignored local override (the `.burnctlignore`
+  pattern already used for leak patterns), not restoring names to shipped source.
+- `cli.py:1451` returns a hardcoded `/root/backups/claudash` as the default backup
+  directory, and prints it. No non-root user can write there, and it violates the
+  no-Claudash-in-user-output rule. Kept deliberately so existing rclone sync is not
+  broken; needs a decision, not a patch. Auditor Check 3's only remaining warning.
+- `determine_verdict` still scores project-wide waste rather than the pattern each fix
+  targeted, so 116 of 127 measurements read "improving" and 5 of 8 baselines are
+  flagged corrupted. `feat/loop-close` (3bcfd34) is a partial fix, unmerged, pending a
+  `COST_TOLERANCE_PCT` ruling.
+- I3 invariant (pm2 process newer than last `.py` edit) reads FAIL until the next
+  deploy; pm2 has been up since 2026-11-07 06:55.
