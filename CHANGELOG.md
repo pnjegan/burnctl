@@ -4103,6 +4103,38 @@ v4.5.5 hotfix-on-hotfix), plus a full-day narrative at
   permanently. Adds self-heal eviction plus cost-integrity tests.
   Files: waste_patterns.py, tests/test_waste_events_cost_integrity.py
 
+### Added
+- `tools/audit_checks.py` — the auditor's 7 checks as one stdlib command. They
+  used to live in `burnctl-auditor.md` as compound `grep | grep -v | grep -vE`
+  pipelines, which a non-interactive session (the nightly cron) refuses as
+  multiple operations needing approval: a fresh run returned 5 of 7 BLOCKED with
+  nothing wrong in the repo. One process, no pipelines, and the existing
+  `Bash(python3:*)` rule already covers it, so no new permission was needed.
+  Exit codes 0/1/3; `--check N`, `--json`. Verified in a fresh process: all
+  seven execute, none BLOCKED.
+  Why: the greps were never the problem, the delivery was — and the logic now
+  sits in testable code instead of a prompt.
+  Files: tools/audit_checks.py, tests/test_audit_checks_classifier.py,
+  docs/agents/burnctl-auditor.md (d1228aa)
+
+### Fixed
+- **A bug the shell check could never see.** Check 2's `grep -v ".git"` has an
+  unescaped, unanchored dot, so it matched "git**hub**" and silently dropped
+  every line containing `github.com/pnjegan`. Four user-visible hits —
+  `fix_tracker.py:630,664` and `bin/burnctl.js:10,101` — were invisible for the
+  entire life of that check. They are shipped attribution, the same class as the
+  LICENSE copyright, so they are now exempt with that reason recorded. Earlier
+  runs in this session reported "3 hits" where the truth was 7.
+- I3 invariant scope — `tools/hooks/check_invariants.py` walked every `.py` in
+  the repo, while `INVARIANTS.md:32-38` scopes I3 to "any `.py` file it
+  imports". Editing a test or a dev tool therefore blocked the stop hook with a
+  stale-*server* verdict about code the server never loads, which is exactly
+  what happened after this session added `tests/test_audit_checks_classifier.py`.
+  Now skips `tests/`, `tools/`, `ARCHIVE/`, `venv/`. Verified by probe in all
+  three directions: a new file under `tests/` is ignored, one under `tools/` is
+  ignored, and a new root-level module still FAILs — detection for the original
+  2026-07-17 incident class is intact.
+
 ### Changed
 - Maintainer project names removed from shipped code. `PROJECT_MAP` is `{}` with a
   worked example; `COMPACT_INSTRUCTIONS` keeps only `burnctl` and `default`;
