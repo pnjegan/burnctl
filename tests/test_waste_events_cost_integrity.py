@@ -46,17 +46,21 @@ HOT_COST = HOT_TURNS * HOT_COST_PER_TURN  # $300 — clears the r1 $300 floor
 
 # JSONL: 5 identical Bash calls (floundering: 5 repeats >= threshold 4)
 # + 4 reads of one file (repeated_reads: 4 >= threshold 3) + 1 other call.
-HOT_JSONL = (
-    [{"type": "assistant", "sessionId": "hot",
-      "message": {"content": [{"type": "tool_use", "name": "Bash",
-                               "input": {"command": "npm test"}}]}}] * 5
-    + [{"type": "assistant", "sessionId": "hot",
-        "message": {"content": [{"type": "tool_use", "name": "Read",
-                                 "input": {"file_path": "/p/app.py"}}]}}] * 4
-    + [{"type": "assistant", "sessionId": "hot",
-        "message": {"content": [{"type": "tool_use", "name": "Grep",
-                                 "input": {"pattern": "x"}}]}}]
-)
+def _wasteful_jsonl(sid):
+    return (
+        [{"type": "assistant", "sessionId": sid,
+          "message": {"content": [{"type": "tool_use", "name": "Bash",
+                                   "input": {"command": "npm test"}}]}}] * 5
+        + [{"type": "assistant", "sessionId": sid,
+            "message": {"content": [{"type": "tool_use", "name": "Read",
+                                     "input": {"file_path": "/p/app.py"}}]}}] * 4
+        + [{"type": "assistant", "sessionId": sid,
+            "message": {"content": [{"type": "tool_use", "name": "Grep",
+                                     "input": {"pattern": "x"}}]}}]
+    )
+
+
+HOT_JSONL = _wasteful_jsonl("hot")
 
 
 def _temp_env():
@@ -175,6 +179,70 @@ class TestWasteEventsCostIntegrity(unittest.TestCase):
         self.assertEqual(n, 0,
                          "session inactive >WASTE_WINDOW_DAYS must not be"
                          " re-stamped into the recent waste window")
+
+    def _assert_invariant_all_sessions(self, when):
+        rows = self.conn.execute(
+            "SELECT session_id, SUM(token_cost) AS waste"
+            " FROM waste_events GROUP BY session_id").fetchall()
+        self.assertTrue(rows, f"vacuous — no waste rows to check ({when})")
+        for r in rows:
+            cost = self._session_cost(r["session_id"])
+            self.assertLessEqual(
+                r["waste"], cost * 1.000001,
+                f"{r['session_id']}: waste ${r['waste']:.2f} > spend"
+                f" ${cost:.2f} {when}")
+
+    def test_invariant_holds_after_second_detect_all_pass(self):
+        # The 2026-07-17 follow-up gap: the single-call fixture proved one
+        # clean pass; real scans repeat every few minutes with new sessions
+        # appearing in between. cost_outlier/cost_anomaly re-UPSERT FRESH
+        # (unscaled) attributed values on every pass — normalization must
+        # re-apply each time or the invariant decays run over run.
+        jsonl2 = os.path.join(self._tmp, "hot2.jsonl")
+        with open(jsonl2, "w") as f:
+            for obj in _wasteful_jsonl("hot2"):
+                f.write(json.dumps(obj) + "\n")
+        self.conn.execute(
+            "INSERT INTO scan_state (file_path, last_offset, last_scanned,"
+            " lines_processed) VALUES (?, 1, ?, ?)",
+            (jsonl2, int(time.time()) + 5, 10))
+        for t in range(20):
+            _insert_turn(self.conn, "hot2", NOW - 600 + t, cost=10.0, out_tok=5)
+        self.conn.commit()
+
+        wp.detect_all(self.conn)  # second pass, new session in between
+
+        pats2 = [r[0] for r in self.conn.execute(
+            "SELECT pattern_type FROM waste_events WHERE session_id='hot2'")]
+        self.assertTrue(pats2, "second pass must flag the new session")
+        self._assert_invariant_all_sessions("after 2nd detect_all pass")
+
+    def test_stale_process_full_cost_rows_healed_on_next_pass(self):
+        # Simulates what a still-running pre-fix process does between passes
+        # (the pm2 dashboard's 5-min periodic scan with 9-day-old code in
+        # memory): UPSERTs FULL session cost as token_cost, windows nothing.
+        db_path = os.path.join(self._tmp, "data", "usage.db")
+        orig = db.DB_PATH
+        db.DB_PATH = db_path
+        try:
+            db.insert_waste_event(self.conn, "hot", "P", "a", "cost_outlier",
+                                  "amber", HOT_TURNS, HOT_COST, {})
+            db.insert_waste_event(self.conn, "old", "P", "a",
+                                  "deep_no_compact", "amber", HOT_TURNS,
+                                  600.0, {})
+        finally:
+            db.DB_PATH = orig
+        self.conn.commit()
+
+        wp.detect_all(self.conn)  # next healthy pass must repair both
+
+        self._assert_invariant_all_sessions("after healing pass")
+        n_old = self.conn.execute(
+            "SELECT COUNT(*) FROM waste_events WHERE session_id='old'"
+        ).fetchone()[0]
+        self.assertEqual(n_old, 0,
+                         "stale-session rows written by a foreign process"
+                         " must be evicted on the next detect_all pass")
 
 
 if __name__ == "__main__":

@@ -186,7 +186,7 @@ def _detect_floundering(tool_calls):
 
     Density-based, not consecutive: real Claude Code sessions interleave
     Reads/Greps/Edits between retries, so the legacy "4 in a row" rule
-    never fired (see BURNCTL_AUDIT.md §7 flag 1 — top Tidify session had
+    never fired (see BURNCTL_AUDIT.md §7 flag 1 — a top session had
     7 repeats of one Bash invocation but longest consecutive run was 1).
     Intentional re-runs stay excluded because identical-input calls that
     are spread widely (>FLOUNDER_WINDOW apart) are not flagged."""
@@ -761,6 +761,24 @@ def detect_all(conn=None):
             cost_anomaly_count += 1
     except Exception as e:
         print(f"[waste_patterns] cost_anomaly detection error: {e}", file=__import__("sys").stderr)
+
+    # ── Self-heal: evict waste rows for sessions inactive beyond the
+    #    window. detect_all never re-detects those (the window gates all
+    #    detectors), so rows left behind by an earlier pass — or written by
+    #    a STALE PROCESS still running pre-window code (the 2026-07-17
+    #    follow-up bug: the pm2 dashboard's 5-min periodic scan, 9 days of
+    #    uptime, old module tree in memory) — would otherwise sit in the
+    #    "recent" waste window forever via their detected_at stamp. True
+    #    orphans (no sessions rows at all, e.g. mcp_reported_*) are kept;
+    #    _normalize_session_waste zeroes their cost instead. ──
+    conn.execute(
+        "DELETE FROM waste_events WHERE session_id IN ("
+        "  SELECT w.session_id FROM waste_events w"
+        "  JOIN sessions s ON s.session_id = w.session_id"
+        "  GROUP BY w.session_id"
+        "  HAVING MAX(s.timestamp) < ?)",
+        (window_cutoff,),
+    )
 
     # ── Invariant: a session cannot waste more than it spent. Individual
     #    attributions are each capped at session cost, but PATTERNS OVERLAP
