@@ -4213,3 +4213,66 @@ v4.5.5 hotfix-on-hotfix), plus a full-day narrative at
   `COST_TOLERANCE_PCT` ruling.
 - I3 invariant (pm2 process newer than last `.py` edit) reads FAIL until the next
   deploy; pm2 has been up since 2026-11-07 06:55.
+
+---
+
+## [2026-11-10] Session 59 — Host backup cron repaired after 203 dead days
+
+### Highlights
+- The automated backup of `data/usage.db` works again. It had written nothing
+  since 2026-04-20 and reported success every hour throughout.
+- The silent-success bug was the real defect, not the stale path. Both scripts
+  now fail loudly when the DB is missing.
+- Found along the way: the ten Session 58 commits were already on the public
+  remote, pushed unreviewed by `/root/backup_master.sh`, and its auto-commit
+  step has been broken for months while logging success.
+
+### Fixed (host scripts, outside this repo)
+- **`DB_PATH` repointed** from the pre-rename
+  `/root/projects/jk-usage-dashboard/data/usage.db` to
+  `/root/projects/burnctl/data/usage.db` in
+  `/root/projects/backups/claudash_backup_hourly.sh:7` and
+  `claudash_backup_daily.sh:8`. The hourly script's `python3 - << 'PYEOF'`
+  heredoc is single-quoted, so `$DB_PATH` never reached it; its own literal at
+  `:37` had to be replaced separately. Originals kept as
+  `*.sh.bak-20261110_130840`.
+- **The missing-DB branch no longer reports success.** The hourly script did
+  `exit 0` on a missing DB, so cron logged a clean run through 4,876
+  consecutive failures — that, not the stale path, is why seven months passed
+  unnoticed. It now logs `FAIL` and exits 1. The daily script's equivalent
+  branch logged `WARN` without incrementing `ERRORS`, so its summary line still
+  read "all checks passed"; it now counts the error.
+- Verified by running the hourly script end to end: `OK DB backup ... (82M)`,
+  `exported 8 fixes, 127 measurements`, `OK Google Drive sync done`, exit 0.
+  The backup copy passes `PRAGMA integrity_check` and carries all 29 tables.
+  `sessions` reads 105,324 against the live 105,339 because the scanner kept
+  writing after the snapshot — correct for a hot backup.
+
+### Known Issues / Not Done
+- **`/root/backup_master.sh` pushes this repo to the public remote nightly,
+  unreviewed.** `backup_master.sh:98` passes an empty branch, and
+  `TARGET_BRANCH="${BRANCH:-$CURRENT_BRANCH}"` resolves to whatever is checked
+  out — `v5.0-session-1`. At 18:00 on 2026-11-09 it pushed `5683ee5..3458791`,
+  i.e. all ten Session 58 commits, 17 minutes after the last one was authored.
+  `git ls-remote` confirms origin is at `3458791`. This is a standing conflict
+  with CLAUDE.md's "Never: auto-commit without human review", and it means any
+  commit made here is published the same evening without a review step.
+- **That script's auto-commit has been broken for months, and the breakage is
+  the only thing preventing a leak.** Its
+  `git add -A -- . ':!*.db' ':!*.bak*' ':!uploads/' ':!__pycache__/'` fails with
+  `fatal: Unimplemented pathspec magic '_' in ':!__pycache__/'`, so nothing is
+  ever staged; the log line `burnctl - committed 37 files` reports the dirty
+  count, not what was committed, and the real git output two lines above it
+  reads `nothing added to commit but untracked files present`. Repairing the
+  pathspec without first triaging the working tree would publish 37 untracked
+  paths, 10 of which contain `/root/projects` paths or the host IP — the exact
+  Check 2 leak class. No credentials are among them (checked for `sk-ant-`,
+  `ghp_`, `AIza` prefixes).
+- Backup volume is now real and unmanaged: the hourly script keeps 24 files
+  (`-hourly-${HOUR}.db`) at ~82 MB, so roughly 2 GB accumulates locally once a
+  full day cycles, all of it inside the `rclone copy` to
+  `Drive:tidify-backups/`. Disk was 26 GB free (79% used) at the time of the
+  fix. Reducing retention or gzipping before sync is a decision, not a defect.
+- Backup filenames still read `claudash-db-hourly-*`. These are host artifacts,
+  not burnctl user-visible output, so auditor Check 3 does not apply; renaming
+  would orphan the existing Drive copies.
